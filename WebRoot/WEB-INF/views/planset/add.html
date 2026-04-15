@@ -27,11 +27,6 @@ $(document).ready(function($) {
             index.addPlan();
         });
     });
-     //配色
-    $("#bcgl_color_img").bigColorpicker(function(el,color){
-        $(el).css("background-color",color);
-        $("#inputColor").val(color);
-    });
     //datetimepicker日期选择控件
     $('#planStartTime').datetimepicker({
         language:  'fr',
@@ -60,6 +55,14 @@ $(document).ready(function($) {
         planTimeChange(ev);
     });
 });
+
+function parseTimeValue(timeString) {
+    if (!timeString) return null;
+    var match = timeString.trim().match(/(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (!match) return null;
+    return Number(match[1]) + Number(match[2]) / 60;
+}
+
 //计算总时间
 function planTimeChange(e) {
     $("#updatePlanForm").data('bootstrapValidator').resetForm();
@@ -68,21 +71,17 @@ function planTimeChange(e) {
     var eTime = $('#inputEndTime').val();
     $('#inputPeriodTime').val(sTime + "-" + eTime);
 
-    if (sTime) {
-        var sTime0 = sTime.split(":")[0];
-        var sTime1 = (sTime.split(":")[1] / 60).toFixed(1);
-        sTime = Number(sTime0) + Number(sTime1);
+    var sValue = parseTimeValue(sTime);
+    var eValue = parseTimeValue(eTime);
+    if (sValue == null || eValue == null) {
+        $('#inputTotalTime').val('');
+        return;
     }
-    if (eTime) {
-        var eTime0 = eTime.split(":")[0];
-        var eTime1 = (eTime.split(":")[1] / 60).toFixed(1);
-        eTime = Number(eTime0) + Number(eTime1);
-    }
-    var totalTime = Number((eTime - sTime).toFixed(1));
+
+    var totalTime = eValue - sValue;
     if (totalTime < 0) {
-        $('#inputTotalTime').val(Number(totalTime)+24);
-    }else{
-        $('#inputTotalTime').val(totalTime);
+        totalTime += 24;
     }
+    $('#inputTotalTime').val(Number(totalTime.toFixed(1)));
 }
 </script>

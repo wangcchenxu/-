@@ -115,10 +115,9 @@ define(function(require, exports, module) {
             if (!rows.length) {
                 return;
             } else {
-                var url = config.options.hostUrl + "delPerson";
+                var ids = [];
                 for (var i = 0; i < rows.length; i++) {
-                    var id = rows[i].pid;
-                    url += "/" + id;
+                    ids.push(rows[i].pid);
                     if (rows[i].lock == 1) {
                         lockFlag = true;
                     }
@@ -129,7 +128,8 @@ define(function(require, exports, module) {
                 }
                 $.messager.confirm('删除提醒', '是否确定删除该人员信息?', function(ok) {
                     if (ok) {
-                        $.get(url, function(data) {
+                        var url = config.options.hostUrl + "delPerson";
+                        $.post(url, {ids: JSON.stringify(ids)}, function(data) {
                             pdg.datagrid('reload');
                             $.messager.show({
                                 title: '提示',

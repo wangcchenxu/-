@@ -3,10 +3,25 @@
     <div class="form-group">
         <input type="hidden" id="inputPid" value="${(result.pid)!}" />
         <input type="hidden" id="inputPeriodTime" value="${(result.periodTime)!}" />
-        <label for="inputColor" class="col-sm-2 control-label">颜色*</label>
-        <div class="col-sm-6">
-            <input type="hidden" id="inputColor" value="${(result.color)!}" class="form-control">
-            <a href="javascript:void(0)" id="bcgl_color_img" class="form-control"></a>
+        <input type="hidden" id="inputColor" value="${(result.color)!}" class="form-control">
+        <label class="col-sm-2 control-label">班次样式*</label>
+        <div class="col-sm-6" id="styleSelector">
+            <div class="style-option" data-color="#d9534f" data-name="充网告警_夜">
+                <div class="style-preview" style="background-color:#d9534f;"></div>
+                <span>充网告警_夜</span>
+            </div>
+            <div class="style-option" data-color="#f0ad4e" data-name="充网告警_白1">
+                <div class="style-preview" style="background-color:#f0ad4e;"></div>
+                <span>充网告警_白1</span>
+            </div>
+            <div class="style-option" data-color="#f0e68c" data-name="充网告警_白2">
+                <div class="style-preview" style="background-color:#f0e68c;"></div>
+                <span>充网告警_白2</span>
+            </div>
+            <div class="style-option" data-color="#cccccc" data-name="休息">
+                <div class="style-preview" style="background-color:#cccccc;"></div>
+                <span>休息</span>
+            </div>
         </div>
     </div>
     <div class="form-group">
@@ -59,8 +74,58 @@
         </div>
     </div>
 </form>
+<style>
+#styleSelector {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.style-option {
+    padding: 8px 12px;
+    border: 2px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 80px;
+}
+.style-option:hover {
+    border-color: #999;
+}
+.style-option.active {
+    border-color: #0275d8;
+    box-shadow: 0 0 5px rgba(2, 117, 216, 0.5);
+}
+.style-preview {
+    width: 50px;
+    height: 30px;
+    border-radius: 3px;
+    border: 1px solid #999;
+}
+.style-option span {
+    font-size: 12px;
+    text-align: center;
+    word-break: break-word;
+}
+</style>
 <script>
 $(document).ready(function() {
+    const currentColor = $('#inputColor').val();
+    $('#styleSelector .style-option').each(function() {
+        if ($(this).data('color') === currentColor) {
+            $(this).addClass('active');
+        }
+    });
+    
+    $('#styleSelector .style-option').click(function() {
+        $('#styleSelector .style-option').removeClass('active');
+        $(this).addClass('active');
+        $('#inputColor').val($(this).data('color'));
+    });
+
     window.planValidator=$('#updatePlanForm').bootstrapValidator({
         message: '无效的输入值',
         feedbackIcons: {

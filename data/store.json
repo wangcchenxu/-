@@ -1,0 +1,103 @@
+{
+  "gc_schedule_person": [
+    {
+      "pid": 1,
+      "name": "giscafer",
+      "sex": "2",
+      "email": "giscafer@outlook.com",
+      "cellphone": "18700947729"
+    },
+    {
+      "pid": 3,
+      "name": "宋涛",
+      "sex": "2",
+      "email": "st123@163.com",
+      "cellphone": "13845265486"
+    },
+    {
+      "pid": 4,
+      "name": "韩斌",
+      "sex": "1",
+      "email": "hb2010@163.com",
+      "cellphone": "15110123521"
+    },
+    {
+      "pid": 5,
+      "name": "于莎莎",
+      "sex": "1",
+      "email": "yuss@163.com",
+      "cellphone": "15112512545"
+    },
+    {
+      "pid": 13,
+      "name": "程明",
+      "sex": "2",
+      "email": "cheng123@163.com",
+      "cellphone": "15212546358"
+    }
+  ],
+  "gc_common_dict": [
+    {
+      "domainName": "性别",
+      "dictCode": "1",
+      "dictName": "男"
+    },
+    {
+      "domainName": "性别",
+      "dictCode": "2",
+      "dictName": "女"
+    }
+  ],
+  "gc_schedule_plan": [
+    {
+      "pid": 4,
+      "planName": "事假",
+      "color": "#FFAC00",
+      "defineType": 1,
+      "planType": 2,
+      "totalTime": "9.0",
+      "periodTime": "09:00-18:00"
+    },
+    {
+      "pid": 8,
+      "planName": "病假",
+      "color": "#FF0000",
+      "defineType": 1,
+      "planType": 2,
+      "totalTime": "9.0",
+      "periodTime": "09:00-18:00"
+    },
+    {
+      "color": "#d9534f",
+      "planName": "充网告警_夜",
+      "defineType": "2",
+      "planType": "1",
+      "periodTime": "",
+      "totalTime": "",
+      "pid": 53
+    }
+  ],
+  "gc_schedule_planorder": [
+    {
+      "id": 1,
+      "planItem": "病假|事假|充网告警_夜"
+    }
+  ],
+  "gc_schedule_group": [
+    {
+      "groupName": "未命名",
+      "order": 1,
+      "groupItem": "程明|于莎莎|韩斌|宋涛|giscafer",
+      "gid": 1
+    },
+    {
+      "groupName": "未命名",
+      "order": 1,
+      "groupItem": "程明|于莎莎|韩斌|宋涛|giscafer",
+      "gid": 2
+    }
+  ],
+  "gc_schedule_group_person_v": [],
+  "gc_schedule_scheduler": [],
+  "gc_schedule_check_statistics_v": []
+}
