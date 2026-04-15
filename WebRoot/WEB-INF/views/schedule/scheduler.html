@@ -1,7 +1,5 @@
 <div class="header">
     <div class="stats">
-        <button type="button" id="piaban_startEdit" class="btn btn-primary btn-sm">开始编辑</button>
-        <button type="button" id="piaban_stopEdit" class="btn btn-primary btn-sm" style="display:none;"><i class="fa fa-save"></i> 保存编辑</button>
     </div>
     <h1 class="page-title">排班管理</h1>
     <ul class="breadcrumb">
@@ -9,74 +7,514 @@
         <li class="active">排班管理</li>
     </ul>
 </div>
-<div class="calendarWrapper">
-    <div id='pbgl_nav' style='display:none;width: 1002px;margin-left: 10px;'>
-        <p id="pbgl_nav_p" style="font-weight:bold;margin-bottom: 5px; margin-top: 5px;"></p>
-        <div id="pbgl_nav_div"></div>
+
+<div class="main-content">
+    <!-- 第一步：员工需求 -->
+    <div id="schedule_step1" class="schedule-step" style="display:block;">
+        <h3>第一步：员工假期需求</h3>
+        <p>记录员工在指定月份内需要休息的具体日期</p>
+        <div style="margin: 20px 0;">
+            <label>选择月份：</label>
+            <input type="month" id="schedule_month" style="padding:5px 10px;font-size:14px;">
+        </div>
+        <table id="schedule_demand_table" class="table table-bordered" style="margin-top:20px;">
+            <thead>
+                <tr>
+                    <th style="width:20%;">员工姓名</th>
+                    <th style="width:20%;">本月上班天数</th>
+                    <th style="width:40%;">休息日期（可多选，用逗号分隔）</th>
+                    <th style="width:20%;">操作</th>
+                </tr>
+            </thead>
+            <tbody id="schedule_demand_body">
+            </tbody>
+        </table>
+        <button type="button" id="schedule_step1_save" class="btn btn-success" style="margin-top:10px;">保存员工需求</button>
+        <button type="button" id="schedule_generate_btn" class="btn btn-primary" style="margin-top:10px; margin-left:10px;">生成班表</button>
+        <div id="schedule_roster_container" style="overflow-x:auto; margin-top:20px;">
+            <table id="schedule_roster_table" class="table table-bordered table-condensed">
+                <thead id="schedule_roster_head">
+                </thead>
+                <tbody id="schedule_roster_body">
+                </tbody>
+            </table>
+        </div>
+        <button type="button" id="schedule_export_btn" class="btn btn-success" style="margin-top:10px;">导出班表</button>
     </div>
-    <div id="pbgl_calendar" class="dib" style="overflow-y:auto"></div>
-    <div class="paiban_xia_toolbar paiban_toolbar_container" id="paiban_toolbar_container" style="display:none;"></div>
 </div>
-<script>
 
-$(document).ready(function($) {
-    // setGridHeightAuto("pbgl_calendar");
-    // setGridHeightAuto("calendarWrapper", -20);
-     //避免页面切换的时候没销毁窗口
-    if (Giscafer.popUpLayer) {
-        Giscafer.popUpLayer.close();
+<script type="text/javascript">
+$(document).ready(function() {
+    var currentMonth = new Date().toISOString().substring(0, 7);
+    $('#schedule_month').val(currentMonth);
+    
+    // 页面状态
+    var step1Saved = false;
+    var scheduleGenerated = false;
+    var generatedMonth = null;
+    var lastGeneratedDemands = null;
+    var personList = [];
+
+    function getSchedulePageState() {
+        return JSON.parse(localStorage.getItem('schedule_page_state') || '{}');
     }
-    $("#paiban_toolbar_container").hide();
-    seajs.use('app/schedule/index',function(index){
-    	Giscafer.ep.addListener("afterWeekTableRender", function() {
-		//需要延时执行
-			setTimeout(function() {
-				$("#pbgl_calendar .fc-border-separate").find('.fc-day-content >div').css('height', '');
-				//设定标题
-				index.initCalendarTitle();
-			}, 1);
-		// $("#fore-core-mis").hideLoading();
-		});
-    	index.getPlanInfoAndColor();  //获取班次并创建弹出层
-    	index.getPersonGroup();     //获取人员分组信息
-    	$("#piaban_startEdit").click(function(){
-    		index.calendarEditFuc();
-    	});
-    	$("#piaban_stopEdit").click(function(){
-    		index.calendarStopEditFuc();
-    	});
 
-    });
-   
-    $("#giscafer_content").scroll(
-        function(e) {
-            if ($(this).scrollTop() > 194) {
-                $("#pbgl_nav_p").html("");
-                $("#pbgl_nav_div").html("");
-                $("#pbgl_nav_p").append(
-                    $(".fc-header-left span").html());
-                $("#pbgl_nav_div").append(
-                    $("tr[class='fc-first fc-last']")
-                    .html());
-                $("#pbgl_nav th").first().width("137px");
-                // 			 $("#pbgl_nav th").css({"margin":"0 auto","width":"1000px"});
-                $("#pbgl_nav").show();
-                debugger;
-            }
-            if ($(this).scrollTop() < 195) {
-                //$("#pbgl_nav").html("");
-                $("#pbgl_nav_p").html("");
-                $("#pbgl_nav_div").html("");
-                $("#pbgl_nav").hide();
+    function saveSchedulePageState() {
+        var state = {
+            selectedMonth: $('#schedule_month').val(),
+            generatedMonth: generatedMonth,
+            scheduleGenerated: scheduleGenerated
+        };
+        localStorage.setItem('schedule_page_state', JSON.stringify(state));
+    }
 
+    function getSavedRosterForMonth(month) {
+        var all = JSON.parse(localStorage.getItem('schedule_roster') || '{}');
+        return all[month] || null;
+    }
+
+    function saveRosterForMonth(month, roster) {
+        var all = JSON.parse(localStorage.getItem('schedule_roster') || '{}');
+        all[month] = roster;
+        localStorage.setItem('schedule_roster', JSON.stringify(all));
+    }
+
+    function collectCurrentDemands() {
+        var month = $('#schedule_month').val();
+        var demands = [];
+        $('.schedule-rest-days').each(function() {
+            var pid = $(this).data('pid');
+            var restDays = $(this).val();
+            var workDays = parseInt($('.schedule-work-days[data-pid="' + pid + '"]').val(), 10) || 0;
+            if (restDays || workDays) {
+                demands.push({
+                    pid: pid,
+                    month: month,
+                    restDays: restDays,
+                    workDays: workDays
+                });
             }
         });
-    //
-    window.onresize = function() {
-        $("#pbgl_nav").width(
-            $("tr[class='fc-first fc-last']").width());
-        //$("#pbgl_nav").width($(".workingModel").width() - 30);
+        return demands;
     }
-});
 
+    function updateStepButtons() {
+        $('#schedule_generate_btn').prop('disabled', false);
+    }
+
+    function restorePageState() {
+        var state = getSchedulePageState();
+        if (state.selectedMonth) {
+            $('#schedule_month').val(state.selectedMonth);
+            currentMonth = state.selectedMonth;
+        }
+    }
+
+    function restoreRosterForMonth(month) {
+        var savedRoster = getSavedRosterForMonth(month);
+        if (savedRoster) {
+            renderRoster(savedRoster);
+            scheduleGenerated = true;
+            generatedMonth = month;
+            lastGeneratedDemands = JSON.stringify(getSavedDemandsForMonth(month));
+        }
+    }
+
+    // 需求存储
+    function getSavedDemandsForMonth(month) {
+        var all = JSON.parse(localStorage.getItem('schedule_demands') || '{}');
+        return all[month] || [];
+    }
+
+    function saveDemandsForMonth(month, demands) {
+        var all = JSON.parse(localStorage.getItem('schedule_demands') || '{}');
+        all[month] = demands;
+        localStorage.setItem('schedule_demands', JSON.stringify(all));
+    }
+
+    // 历史排班存储
+    function getSavedHistory() {
+        return JSON.parse(localStorage.getItem('schedule_history') || '{}');
+    }
+
+    function saveHistoryForMonth(month, history) {
+        var all = getSavedHistory();
+        all[month] = history;
+        localStorage.setItem('schedule_history', JSON.stringify(all));
+    }
+
+    function getHistoryForMonth(month) {
+        var all = getSavedHistory();
+        return all[month] || null;
+    }
+
+    function getPreviousMonth(month) {
+        var parts = month.split('-');
+        var y = parseInt(parts[0], 10);
+        var m = parseInt(parts[1], 10);
+        m--;
+        if (m < 1) { y--; m = 12; }
+        return y + '-' + (m < 10 ? '0' + m : m);
+    }
+
+    function loadPersonList() {
+        var month = $('#schedule_month').val();
+        var savedDemands = getSavedDemandsForMonth(month);
+        var [year, monthStr] = month.split('-');
+        var daysInMonth = new Date(year, monthStr, 0).getDate();
+        var defaultWorkDays = daysInMonth % 2 === 0 ? daysInMonth / 2 : '';
+        $.ajax({
+            url: '/FinalScheduler/queryPerson',
+            type: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                var html = '';
+                var rows = data.slice();
+                for (var i = rows.length; i < 8; i++) {
+                    rows.push({ pid: 'empty_' + (i + 1), name: '员工' + (i + 1) });
+                }
+                rows.forEach(function(person) {
+                    var demand = savedDemands.find(function(item) { return item.pid === person.pid; }) || {};
+                    var workDaysValue = demand.workDays || defaultWorkDays || '';
+                    html += '<tr>';
+                    html += '<td>' + person.name + '</td>';
+                    html += '<td><input type="number" min="0" class="schedule-work-days" data-pid="' + person.pid + '" value="' + workDaysValue + '" placeholder="请输入天数" style="width:100%;padding:5px;"></td>';
+                    html += '<td><input type="text" class="schedule-rest-days" data-pid="' + person.pid + '" value="' + (demand.restDays || '') + '" placeholder="例：5,6,12,13" style="width:100%;padding:5px;"></td>';
+                    html += '<td><button type="button" class="btn btn-xs btn-danger schedule-delete-demand" data-pid="' + person.pid + '">删除</button></td>';
+                    html += '</tr>';
+                });
+                $('#schedule_demand_body').html(html);
+                personList = rows;
+                step1Saved = savedDemands.length > 0;
+                updateStepButtons();
+                restoreRosterForMonth(month);
+            }
+        });
+    }
+    
+    // 保存第一步
+    $('#schedule_step1_save').click(function() {
+        var month = $('#schedule_month').val();
+        var demands = [];
+        $('.schedule-rest-days').each(function() {
+            var pid = $(this).data('pid');
+            var restDays = $(this).val();
+            var workDays = parseInt($('.schedule-work-days[data-pid="' + pid + '"]').val(), 10) || 0;
+            if (restDays || workDays) {
+                demands.push({
+                    pid: pid,
+                    month: month,
+                    restDays: restDays,
+                    workDays: workDays
+                });
+            }
+        });
+        saveDemandsForMonth(month, demands);
+        step1Saved = demands.length > 0;
+        updateStepButtons();
+
+        if (scheduleGenerated && generatedMonth === month) {
+            var currentDemandJson = JSON.stringify(demands);
+            if (currentDemandJson !== lastGeneratedDemands) {
+                if (confirm('假期需求有变动，是否重新生成班表？')) {
+                    generateRoster(demands, getCurrentRules());
+                }
+            }
+        }
+
+        saveSchedulePageState();
+        alert('员工需求已保存');
+    });
+    
+    
+    function getCurrentRules() {
+        return {
+            whiteDayPerDay: 2,
+            nightShiftPerDay: 2,
+            minConsecutiveDays: 2,
+            maxConsecutiveDays: 5
+        };
+    }
+
+    $('#schedule_generate_btn').click(function() {
+        var month = $('#schedule_month').val();
+        var demands = collectCurrentDemands();
+        saveDemandsForMonth(month, demands);
+        step1Saved = demands.length > 0;
+        updateStepButtons();
+        saveSchedulePageState();
+        var rules = getCurrentRules();
+        generateRoster(demands, rules);
+    });
+    
+    function generateRoster(demands, rules) {
+        $.ajax({
+            url: '/FinalScheduler/queryPerson',
+            type: 'GET',
+            dataType: 'json',
+            success: function(persons) {
+                if (!Array.isArray(persons) || persons.length === 0) {
+                    persons = [];
+                    for (var i = 1; i <= 8; i++) {
+                        persons.push({ pid: 'placeholder_' + i, name: '员工' + i, workPreference: '均可' });
+                    }
+                }
+                var roster = generateSchedule(persons, demands, rules);
+                renderRoster(roster);
+                scheduleGenerated = true;
+                generatedMonth = $('#schedule_month').val();
+                lastGeneratedDemands = JSON.stringify(demands);
+                saveRosterForMonth(generatedMonth, roster);
+                saveSchedulePageState();
+            }
+        });
+    }
+    
+    function generateSchedule(persons, demands, rules) {
+        var month = $('#schedule_month').val();
+        var [year, monthStr] = month.split('-');
+        var daysInMonth = new Date(year, monthStr, 0).getDate();
+        var roster = {
+            daysInMonth: daysInMonth,
+            month: month,
+            assignments: {},
+            persons: persons
+        };
+
+        var personDemands = {};
+        demands.forEach(function(d) {
+            personDemands[d.pid] = d.restDays ? d.restDays.split(',').map(x => parseInt(x.trim())).filter(Boolean) : [];
+        });
+
+        var employees = persons.map(function(p) {
+            var demand = demands.find(function(item) { return item.pid == p.pid; }) || {};
+            var required = parseInt(demand.workDays, 10);
+            if (!isFinite(required) || required <= 0) {
+                required = Math.floor(daysInMonth / 2);
+            }
+            return {
+                pid: p.pid,
+                name: p.name,
+                pref: (p.workPreference || '').trim(),
+                restDays: personDemands[p.pid] || [],
+                requiredDays: required,
+                assignedDays: 0,
+                consecutive: 0,
+                lastShift: '',
+                assignments: {}
+            };
+        });
+
+        employees.forEach(function(emp) {
+            var prevState = getPreviousMonthState(month, emp);
+            emp.lastShift = prevState.lastShift;
+            emp.consecutive = prevState.consecutive;
+        });
+
+        function isRestDay(emp, day) {
+            return emp.restDays.indexOf(day) !== -1;
+        }
+
+        function canWork(emp, day, shiftType) {
+            if (isRestDay(emp, day)) return false;
+            if (emp.assignedDays >= emp.requiredDays) return false;
+            if (emp.consecutive >= (rules.maxConsecutiveDays || 5)) return false;
+            if (emp.consecutive > 0 && emp.consecutive < (rules.minConsecutiveDays || 2) && emp.lastShift !== shiftType) return false;
+            return true;
+        }
+
+        function candidateScore(emp, shiftType) {
+            var score = 0;
+            var displayShift = shiftType === 'white' ? '白班' : '夜班';
+            var remaining = emp.requiredDays - emp.assignedDays;
+            score += remaining * 5;
+            if (emp.pref === displayShift) score += 30;
+            if (emp.pref === '均可') score += 10;
+            if (emp.pref && emp.pref !== displayShift && emp.pref !== '均可') score -= 20;
+            if (emp.lastShift === shiftType) score += 40;
+            score -= emp.consecutive * 2;
+            return score;
+        }
+
+        function sortCandidates(list, shiftType) {
+            return list.sort(function(a, b) {
+                return candidateScore(b, shiftType) - candidateScore(a, shiftType);
+            });
+        }
+
+        for (var day = 1; day <= daysInMonth; day++) {
+            roster.assignments[day] = {};
+
+            employees.forEach(function(emp) {
+                if (isRestDay(emp, day)) {
+                    emp.assignments[day] = '休息';
+                    emp.consecutive = 0;
+                    emp.lastShift = '';
+                }
+            });
+
+            var whiteAssigned = 0;
+            var whiteCandidates = employees.filter(function(emp) {
+                return !roster.assignments[day][emp.pid] && canWork(emp, day, 'white');
+            });
+            whiteCandidates = sortCandidates(whiteCandidates, 'white');
+            while (whiteAssigned < (rules.whiteDayPerDay || 2) && whiteCandidates.length > 0) {
+                var emp = whiteCandidates.shift();
+                roster.assignments[day][emp.pid] = { shiftType: 'white', shiftName: '白班' };
+                emp.assignments[day] = '白班';
+                emp.assignedDays++;
+                emp.consecutive = emp.lastShift === 'white' ? emp.consecutive + 1 : 1;
+                emp.lastShift = 'white';
+                whiteAssigned++;
+            }
+
+            var nightAssigned = 0;
+            var nightCandidates = employees.filter(function(emp) {
+                return !roster.assignments[day][emp.pid] && canWork(emp, day, 'night');
+            });
+            nightCandidates = sortCandidates(nightCandidates, 'night');
+            while (nightAssigned < (rules.nightShiftPerDay || 2) && nightCandidates.length > 0) {
+                var emp2 = nightCandidates.shift();
+                roster.assignments[day][emp2.pid] = { shiftType: 'night', shiftName: '夜班' };
+                emp2.assignments[day] = '夜班';
+                emp2.assignedDays++;
+                emp2.consecutive = emp2.lastShift === 'night' ? emp2.consecutive + 1 : 1;
+                emp2.lastShift = 'night';
+                nightAssigned++;
+            }
+
+            employees.forEach(function(emp) {
+                if (!roster.assignments[day][emp.pid]) {
+                    emp.assignments[day] = '休息';
+                    emp.consecutive = 0;
+                    emp.lastShift = '';
+                }
+            });
+        }
+
+        roster.persons = employees;
+        return roster;
+    }
+
+    function getPreviousMonthState(month, emp) {
+        var prevMonth = getPreviousMonth(month);
+        var history = getHistoryForMonth(prevMonth);
+        if (!history || !history.assignments || !history.assignments[emp.pid]) {
+            return { lastShift: '', consecutive: 0 };
+        }
+        var assignments = history.assignments[emp.pid];
+        var days = Object.keys(assignments).map(function(day) { return parseInt(day, 10); }).sort(function(a, b) { return a - b; });
+        var lastDay = days[days.length - 1];
+        if (!lastDay) return { lastShift: '', consecutive: 0 };
+        var lastValue = assignments[lastDay];
+        if (lastValue !== '白班' && lastValue !== '夜班') return { lastShift: '', consecutive: 0 };
+        var consecutive = 1;
+        for (var i = lastDay - 1; i >= 1; i--) {
+            if (assignments[i] === lastValue) {
+                consecutive++;
+            } else {
+                break;
+            }
+        }
+        return { lastShift: lastValue === '白班' ? 'white' : 'night', consecutive: consecutive };
+    }
+
+    function renderRoster(roster) {
+        var daysInMonth = roster.daysInMonth;
+        var headHtml = '<tr><th style="width:120px;">姓名</th>';
+        for (var i = 1; i <= daysInMonth; i++) {
+            headHtml += '<th style="min-width:60px; text-align:center;">' + i + '</th>';
+        }
+        headHtml += '</tr>';
+        $('#schedule_roster_head').html(headHtml);
+
+        var bodyHtml = '';
+        roster.persons.forEach(function(emp) {
+            bodyHtml += '<tr>';
+            bodyHtml += '<td style="font-weight:bold; background:#f7f7f7;">' + emp.name + '</td>';
+            for (var day = 1; day <= daysInMonth; day++) {
+                var assignment = emp.assignments[day];
+                var cellText = assignment || '休息';
+                var cellColor = '#f5f5f5';
+                var textColor = '#333';
+                if (assignment === '白班') {
+                    cellColor = '#f0ad4e';
+                    textColor = '#fff';
+                    cellText = '白班';
+                } else if (assignment === '夜班') {
+                    cellColor = '#d9534f';
+                    textColor = '#fff';
+                    cellText = '夜班';
+                } else if (assignment === '休息') {
+                    cellColor = '#d9edf7';
+                    textColor = '#333';
+                }
+                bodyHtml += '<td style="background:' + cellColor + '; color:' + textColor + '; text-align:center; vertical-align:middle;">' + cellText + '</td>';
+            }
+            bodyHtml += '</tr>';
+        });
+        $('#schedule_roster_body').html(bodyHtml);
+    }
+
+    $('#schedule_month').change(function() {
+        if (scheduleGenerated && $('#schedule_month').val() !== generatedMonth) {
+            scheduleGenerated = false;
+            generatedMonth = null;
+            lastGeneratedDemands = null;
+        }
+        loadPersonList();
+        saveSchedulePageState();
+    });
+
+    $('#schedule_demand_body').on('click', '.schedule-delete-demand', function() {
+        var pid = $(this).data('pid');
+        $('.schedule-work-days[data-pid="' + pid + '"]').val('');
+        $('.schedule-rest-days[data-pid="' + pid + '"]').val('');
+        var demands = collectCurrentDemands();
+        saveDemandsForMonth($('#schedule_month').val(), demands);
+        step1Saved = demands.length > 0;
+        updateStepButtons();
+        saveSchedulePageState();
+    });
+
+    $('#schedule_demand_body').on('change', '.schedule-work-days, .schedule-rest-days', function() {
+        var demands = collectCurrentDemands();
+        saveDemandsForMonth($('#schedule_month').val(), demands);
+        step1Saved = demands.length > 0;
+        updateStepButtons();
+        saveSchedulePageState();
+    });
+
+    restorePageState();
+    loadPersonList();
+    updateStepButtons();
+});
 </script>
+
+<style>
+.schedule-step {
+    padding: 20px;
+    background: #fff;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+.schedule-step h3 {
+    margin-top: 0;
+    color: #333;
+}
+#schedule_roster_table {
+    border-collapse: collapse;
+    width: 100%;
+}
+#schedule_roster_table th,
+#schedule_roster_table td {
+    padding: 6px 10px;
+    border: 1px solid #e1e1e1;
+    white-space: nowrap;
+}
+#schedule_roster_table th {
+    background: #fcfcfc;
+    text-align: center;
+}
+</style>
+

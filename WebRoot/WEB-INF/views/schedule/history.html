@@ -1,0 +1,170 @@
+<div class="header">
+    <div class="stats">
+    </div>
+    <h1 class="page-title">历史排班</h1>
+    <ul class="breadcrumb">
+        <li><a href="./">Home</a> </li>
+        <li><a href="#" onclick="loadUI('WEB-INF/views/schedule/scheduler.html')">排班管理</a></li>
+        <li class="active">历史排班</li>
+    </ul>
+</div>
+
+<div class="main-content">
+    <div style="margin: 20px 0; padding: 20px; background: #f5f5f5; border-radius: 4px;">
+        <h4>历史排班管理</h4>
+        <div style="margin-bottom: 15px;">
+            <label>历史月份：</label>
+            <input type="month" id="history_month" style="padding:5px 10px;font-size:14px;">
+            <button type="button" id="history_load_btn" class="btn btn-default" style="margin-left:10px;">加载历史排班</button>
+            <button type="button" id="history_save_btn" class="btn btn-success" style="margin-left:10px;">保存历史排班</button>
+        </div>
+        <div id="history_roster_container" style="overflow-x:auto;">
+            <table id="history_roster_table" class="table table-bordered table-condensed">
+                <thead id="history_roster_head"></thead>
+                <tbody id="history_roster_body"></tbody>
+            </table>
+        </div>
+        <p style="margin-top:10px;color:#666;font-size:12px;">初始为空表，可点击单元格循环选择 白班 / 夜班 / 休息。三月末排班保存后，四月生成时会自动考虑三月末末班状态。</p>
+    </div>
+</div>
+
+<script type="text/javascript">
+$(document).ready(function() {
+    var currentMonth = new Date().toISOString().substring(0, 7);
+    $('#history_month').val(currentMonth);
+
+    var personList = [];
+    var historyStatuses = ['休息', '白班', '夜班'];
+
+    // 历史排班存储
+    function getSavedHistory() {
+        return JSON.parse(localStorage.getItem('schedule_history') || '{}');
+    }
+
+    function saveHistoryForMonth(month, history) {
+        var all = getSavedHistory();
+        all[month] = history;
+        localStorage.setItem('schedule_history', JSON.stringify(all));
+    }
+
+    function getHistoryForMonth(month) {
+        var all = getSavedHistory();
+        return all[month] || null;
+    }
+
+    function loadPersonList() {
+        $.ajax({
+            url: '/FinalScheduler/queryPerson',
+            type: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                var rows = data.slice();
+                for (var i = rows.length; i < 8; i++) {
+                    rows.push({ pid: 'empty_' + (i + 1), name: '员工' + (i + 1) });
+                }
+                personList = rows;
+                renderHistoryTable($('#history_month').val());
+            }
+        });
+    }
+
+    $('#history_load_btn').click(function() {
+        renderHistoryTable($('#history_month').val());
+    });
+
+    $('#history_save_btn').click(function() {
+        var month = $('#history_month').val();
+        var history = collectHistoryTable(month);
+        saveHistoryForMonth(month, history);
+        alert('历史排班已保存');
+    });
+
+    $('#history_month').change(function() {
+        renderHistoryTable($('#history_month').val());
+    });
+
+    $('#history_roster_body').on('click', '.history-cell', function() {
+        var current = $(this).text();
+        var next = cycleHistoryStatus(current);
+        $(this).text(next);
+        $(this).css('background', next === '白班' ? '#f0ad4e' : next === '夜班' ? '#d9534f' : '#d9edf7');
+        $(this).css('color', next === '休息' ? '#333' : '#fff');
+    });
+
+    function renderHistoryTable(month) {
+        if (!personList.length) {
+            return;
+        }
+        var [year, monthStr] = month.split('-');
+        if (!year || !monthStr) {
+            month = currentMonth;
+            year = month.split('-')[0];
+            monthStr = month.split('-')[1];
+            $('#history_month').val(month);
+        }
+        var daysInMonth = new Date(year, monthStr, 0).getDate();
+        var history = getHistoryForMonth(month);
+        var headHtml = '<tr><th style="width:120px;">姓名</th>';
+        for (var i = 1; i <= daysInMonth; i++) {
+            headHtml += '<th style="min-width:60px; text-align:center;">' + i + '</th>';
+        }
+        headHtml += '</tr>';
+        $('#history_roster_head').html(headHtml);
+
+        var bodyHtml = '';
+        personList.forEach(function(person) {
+            bodyHtml += '<tr>';
+            bodyHtml += '<td style="font-weight:bold; background:#f7f7f7;">' + person.name + '</td>';
+            for (var day = 1; day <= daysInMonth; day++) {
+                var cellValue = '休息';
+                if (history && history.assignments && history.assignments[person.pid] && history.assignments[person.pid][day]) {
+                    cellValue = history.assignments[person.pid][day];
+                }
+                bodyHtml += '<td class="history-cell" data-pid="' + person.pid + '" data-day="' + day + '" style="background:' + (cellValue === '白班' ? '#f0ad4e' : cellValue === '夜班' ? '#d9534f' : '#d9edf7') + '; color:' + (cellValue === '休息' ? '#333' : '#fff') + '; text-align:center; vertical-align:middle; cursor:pointer;">' + cellValue + '</td>';
+            }
+            bodyHtml += '</tr>';
+        });
+        $('#history_roster_body').html(bodyHtml);
+    }
+
+    function collectHistoryTable(month) {
+        var history = { month: month, assignments: {} };
+        $('#history_roster_body tr').each(function() {
+            var pid = $(this).find('.history-cell').first().data('pid');
+            history.assignments[pid] = {};
+            $(this).find('.history-cell').each(function() {
+                var day = $(this).data('day');
+                history.assignments[pid][day] = $(this).text();
+            });
+        });
+        return history;
+    }
+
+    function cycleHistoryStatus(current) {
+        var index = historyStatuses.indexOf(current);
+        if (index < 0 || index === historyStatuses.length - 1) {
+            return historyStatuses[0];
+        }
+        return historyStatuses[index + 1];
+    }
+
+    loadPersonList();
+});
+</script>
+
+<style>
+#history_roster_table {
+    border-collapse: collapse;
+    width: 100%;
+}
+#history_roster_table th,
+#history_roster_table td {
+    padding: 6px 10px;
+    border: 1px solid #e1e1e1;
+    white-space: nowrap;
+}
+#history_roster_table th {
+    background: #fcfcfc;
+    text-align: center;
+}
+</style>
