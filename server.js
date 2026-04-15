@@ -400,6 +400,230 @@ function replaceVariables(content, context) {
   return result;
 }
 
+function evaluateExpression(expr, context) {
+  // Simple expression evaluator for basic arithmetic and variable access
+  const trimmed = expr.trim();
+  
+  // Handle arithmetic: currentPage - 4
+  const arithmeticMatch = trimmed.match(/^(\w+)\s*([+\-*/])\s*(.+)$/);
+  if (arithmeticMatch) {
+    const left = getValueFromContext(context, arithmeticMatch[1]);
+    const op = arithmeticMatch[2];
+    const rightStr = arithmeticMatch[3].trim();
+    const right = /^\d+$/.test(rightStr) ? parseInt(rightStr, 10) : getValueFromContext(context, rightStr);
+    
+    if (typeof left === 'number' && typeof right === 'number') {
+      switch (op) {
+        case '+': return left + right;
+        case '-': return left - right;
+        case '*': return left * right;
+        case '/': return left / right;
+      }
+    }
+  }
+  
+  // Handle comparisons: (totalPage <= 0) || (currentPage > totalPage)
+  const comparisonMatch = trimmed.match(/^(\w+)\s*([<>=!]+)\s*(.+)$/);
+  if (comparisonMatch) {
+    const left = getValueFromContext(context, comparisonMatch[1]);
+    const op = comparisonMatch[2];
+    const rightStr = comparisonMatch[3].trim();
+    const right = /^\d+$/.test(rightStr) ? parseInt(rightStr, 10) : getValueFromContext(context, rightStr);
+    
+    if (typeof left === 'number' && typeof right === 'number') {
+      switch (op) {
+        case '<': return left < right;
+        case '<=': return left <= right;
+        case '>': return left > right;
+        case '>=': return left >= right;
+        case '==': return left == right;
+        case '!=': return left != right;
+      }
+    }
+  }
+  
+  // Handle logical OR: (condition1) || (condition2)
+  const orMatch = trimmed.match(/^\((.+)\)\s*\|\|\s*\((.+)\)$/);
+  if (orMatch) {
+    const left = evaluateExpression(orMatch[1], context);
+    const right = evaluateExpression(orMatch[2], context);
+    return left || right;
+  }
+  
+  // Handle parentheses: (expression)
+  const parenMatch = trimmed.match(/^\((.+)\)$/);
+  if (parenMatch) {
+    return evaluateExpression(parenMatch[1], context);
+  }
+  
+  // Handle numbers
+  if (/^\d+$/.test(trimmed)) {
+    return parseInt(trimmed, 10);
+  }
+  
+  // Handle variables
+  return getValueFromContext(context, trimmed);
+}
+
+function replaceVariablesExtended(content, context) {
+  let result = content;
+
+  // First handle <#list> loops before replacing global variables
+  result = result.replace(/<#list\s+([\w.()]+)\s+as\s+(\w+)>([\s\S]*?)<\/#list>/g, (match, listExpr, itemVar, body) => {
+    let items = getValueFromContext(context, listExpr);
+    
+    if (typeof items === 'object' && items !== null && typeof items.getList === 'function') {
+      items = items.getList();
+    }
+    
+    if (!Array.isArray(items)) return '';
+    
+    return items.map((item, idx) => {
+      const itemContext = { ...context, [itemVar]: item, item_index: idx };
+      let itemBody = body;
+      
+      // Handle <#local> variable assignments in the loop body
+      itemBody = itemBody.replace(/<#local\s+(\w+)\s*=\s*(.+?)>/g, (match, varName, expr) => {
+        const value = evaluateExpression(expr, itemContext);
+        itemContext[varName] = value;
+        return '';
+      });
+      
+      // Handle <#return> statements
+      itemBody = itemBody.replace(/<#return>/g, () => {
+        return ''; // Skip the rest of the loop body
+      });
+      
+      // Replace variables with item context
+      itemBody = itemBody
+        .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(itemContext, expr))
+        .replace(/\$\{([^}]+)\)!?/g, (_, expr) => getValueFromContext(itemContext, expr));
+      
+      // Handle nested <#if> statements - process more complex patterns first
+      // Pattern: <#if varExpr==numValue>body1<#elseif varExpr2==numValue2>body2<#else>body3</#if>
+      itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#elseif ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#else>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2, body3) => {
+        const checkVal1 = getValueFromContext(itemContext, var1);
+        if (String(checkVal1) === String(val1)) {
+          return body1;
+        }
+        const checkVal2 = getValueFromContext(itemContext, var2);
+        if (String(checkVal2) === String(val2)) {
+          return body2;
+        }
+        return body3;
+      });
+
+      // Pattern: <#if varExpr==numValue>body1<#elseif varExpr2==numValue2>body2</#if>
+      itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#elseif ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2) => {
+        const checkVal1 = getValueFromContext(itemContext, var1);
+        if (String(checkVal1) === String(val1)) {
+          return body1;
+        }
+        const checkVal2 = getValueFromContext(itemContext, var2);
+        if (String(checkVal2) === String(val2)) {
+          return body2;
+        }
+        return '';
+      });
+
+      // Pattern: <#if varExpr==numValue>body1<#else>body2</#if>
+      itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#else>([\s\S]*?)<\/#if>/g, (match, varExpr, compareVal, body1, body2) => {
+        const val = getValueFromContext(itemContext, varExpr);
+        if (String(val) === String(compareVal)) {
+          return body1;
+        }
+        return body2;
+      });
+
+      // Pattern: <#if varExpr==numValue>body</#if>
+      itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([^<]*?)<\/#if>/g, (match, varExpr, compareVal, body) => {
+        const val = getValueFromContext(itemContext, varExpr);
+        if (String(val) === String(compareVal)) {
+          return body;
+        }
+        return '';
+      });
+      
+      // Handle range-based loops like <#list startPage..endPage as i>
+      itemBody = itemBody.replace(/<#list\s+(\w+)\.\.(\w+)\s+as\s+(\w+)>([\s\S]*?)<\/#list>/g, (match, startVar, endVar, loopVar, loopBody) => {
+        const start = getValueFromContext(itemContext, startVar);
+        const end = getValueFromContext(itemContext, endVar);
+        if (typeof start !== 'number' || typeof end !== 'number') return '';
+        
+        let result = '';
+        for (let i = start; i <= end; i++) {
+          const loopContext = { ...itemContext, [loopVar]: i };
+          let processedBody = loopBody
+            .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(loopContext, expr))
+            .replace(/\$\{([^}]+)\)!?/g, (_, expr) => getValueFromContext(loopContext, expr));
+          result += processedBody;
+        }
+        return result;
+      });
+      
+      return itemBody;
+    }).join('');
+  });
+
+  // Handle <#local> variable assignments at global level
+  result = result.replace(/<#local\s+(\w+)\s*=\s*(.+?)>/g, (match, varName, expr) => {
+    const value = evaluateExpression(expr, context);
+    context[varName] = value;
+    return '';
+  });
+
+  // Handle <#return> statements at global level
+  result = result.replace(/<#return>/g, () => {
+    return ''; // Skip the rest
+  });
+
+  // Handle complex <#if> conditions with expressions
+  result = result.replace(/<#if\s+\((.+?)\)\s*\|\|\s*\((.+?)\)>[\s\S]*?<\/#if>/g, (match, cond1, cond2, body) => {
+    const val1 = evaluateExpression(cond1, context);
+    const val2 = evaluateExpression(cond2, context);
+    if (val1 || val2) {
+      return body;
+    }
+    return '';
+  });
+
+  // Then handle global variables
+  result = result
+    .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(context, expr))
+    .replace(/\$\{([^}]+)\)!?/g, (_, expr) => getValueFromContext(context, expr));
+
+  // Handle <#if> statements at global level
+  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#\/if>/g, (match, varExpr, compareVal, body) => {
+    const val = getValueFromContext(context, varExpr);
+    if (String(val) === String(compareVal)) {
+      return body;
+    }
+    return '';
+  });
+
+  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#elseif\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#\/if>/g, (match, var1, val1, body1, var2, val2, body2) => {
+    const checkVal1 = getValueFromContext(context, var1);
+    if (String(checkVal1) === String(val1)) {
+      return body1;
+    }
+    const checkVal2 = getValueFromContext(context, var2);
+    if (String(checkVal2) === String(val2)) {
+      return body2;
+    }
+    return '';
+  });
+
+  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#else>([\s\S]*?)<#\/if>/g, (match, varExpr, compareVal, body1, body2) => {
+    const val = getValueFromContext(context, varExpr);
+    if (String(val) === String(compareVal)) {
+      return body1;
+    }
+    return body2;
+  });
+
+  return result;
+}
+
 
 
 
@@ -407,7 +631,7 @@ async function renderTemplate(templatePath, context = {}) {
   const absolutePath = sanitizeTemplatePath(templatePath);
   const raw = await fs.readFile(absolutePath, 'utf8');
   const withIncludes = await resolveIncludes(raw, path.dirname(absolutePath));
-  return replaceVariables(withIncludes, context);
+  return replaceVariablesExtended(withIncludes, context);
 }
 
 async function renderTemplateRoute(req, res, next) {

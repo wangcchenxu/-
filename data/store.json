@@ -1,39 +1,68 @@
 {
   "gc_schedule_person": [
     {
-      "pid": 1,
-      "name": "giscafer",
-      "sex": "2",
-      "email": "giscafer@outlook.com",
-      "cellphone": "18700947729"
-    },
-    {
-      "pid": 3,
-      "name": "宋涛",
-      "sex": "2",
-      "email": "st123@163.com",
-      "cellphone": "13845265486"
-    },
-    {
-      "pid": 4,
-      "name": "韩斌",
+      "name": "王晨旭",
       "sex": "1",
-      "email": "hb2010@163.com",
-      "cellphone": "15110123521"
+      "lockScreenPwd": "wcx@1109",
+      "workPreference": "白班",
+      "lock": 1,
+      "pid": 1
     },
     {
-      "pid": 5,
-      "name": "于莎莎",
-      "sex": "1",
-      "email": "yuss@163.com",
-      "cellphone": "15112512545"
-    },
-    {
-      "pid": 13,
-      "name": "程明",
+      "name": "高彤彤",
       "sex": "2",
-      "email": "cheng123@163.com",
-      "cellphone": "15212546358"
+      "lockScreenPwd": "941488Gtt",
+      "workPreference": "均可",
+      "lock": 1,
+      "pid": 2
+    },
+    {
+      "name": "伍娜",
+      "sex": "2",
+      "lockScreenPwd": "Fqt#X3Xh",
+      "workPreference": "白班",
+      "lock": 1,
+      "pid": 3
+    },
+    {
+      "name": "张佳宇",
+      "sex": "1",
+      "lockScreenPwd": "z030104。",
+      "workPreference": "均可",
+      "lock": 1,
+      "pid": 4
+    },
+    {
+      "name": "孙泽",
+      "sex": "1",
+      "lockScreenPwd": "lING970819@",
+      "workPreference": "夜班",
+      "lock": 1,
+      "pid": 5
+    },
+    {
+      "name": "王晗",
+      "sex": "1",
+      "lockScreenPwd": "Wh0215..",
+      "workPreference": "夜班",
+      "lock": 1,
+      "pid": 6
+    },
+    {
+      "name": "马泽",
+      "sex": "2",
+      "lockScreenPwd": "Qaz09876@",
+      "workPreference": "均可",
+      "lock": 1,
+      "pid": 7
+    },
+    {
+      "name": "马程浩",
+      "sex": "1",
+      "lockScreenPwd": "8$LUwiTn",
+      "workPreference": "均可",
+      "lock": 1,
+      "pid": 8
     }
   ],
   "gc_common_dict": [
@@ -50,54 +79,60 @@
   ],
   "gc_schedule_plan": [
     {
-      "pid": 4,
-      "planName": "事假",
-      "color": "#FFAC00",
-      "defineType": 1,
-      "planType": 2,
-      "totalTime": "9.0",
-      "periodTime": "09:00-18:00"
-    },
-    {
-      "pid": 8,
-      "planName": "病假",
-      "color": "#FF0000",
-      "defineType": 1,
-      "planType": 2,
-      "totalTime": "9.0",
-      "periodTime": "09:00-18:00"
+      "color": "#f0ad4e",
+      "planName": "充网告警_白",
+      "defineType": "1",
+      "defineTypeName": "系统定义",
+      "planType": "1",
+      "planTypeName": "白班",
+      "periodTime": "08:00-20:00",
+      "totalTime": "12.0",
+      "operationHtml": "<span class=\"disabled\"><a href=\"#\" onclick=\"setPlanModifiedPid(54)\">修改</a></span>",
+      "pid": "54"
     },
     {
       "color": "#d9534f",
       "planName": "充网告警_夜",
-      "defineType": "2",
-      "planType": "1",
-      "periodTime": "",
-      "totalTime": "",
+      "defineType": 1,
+      "defineTypeName": "系统定义",
+      "planType": 2,
+      "planTypeName": "夜班",
+      "periodTime": "20:00-次日08:00",
+      "totalTime": "12.0",
+      "operationHtml": "<span class=\"disabled\"><a href=\"#\" onclick=\"setPlanModifiedPid(53)\">修改</a></span>",
       "pid": 53
     }
   ],
   "gc_schedule_planorder": [
     {
-      "id": 1,
-      "planItem": "病假|事假|充网告警_夜"
+      "planItem": "充网告警_白|充网告警_夜",
+      "id": 1
     }
   ],
   "gc_schedule_group": [
     {
       "groupName": "未命名",
       "order": 1,
-      "groupItem": "程明|于莎莎|韩斌|宋涛|giscafer",
+      "groupItem": "马程浩|马泽|王晗|孙泽|张佳宇|伍娜|高彤彤|王晨旭|马程浩|马泽|王晗|孙泽|张佳宇|伍娜|高彤彤|王晨旭",
       "gid": 1
     },
     {
       "groupName": "未命名",
       "order": 1,
-      "groupItem": "程明|于莎莎|韩斌|宋涛|giscafer",
+      "groupItem": "马程浩|马泽|王晗|孙泽|张佳宇|伍娜|高彤彤|王晨旭|马程浩|马泽|王晗|孙泽|张佳宇|伍娜|高彤彤|王晨旭",
       "gid": 2
     }
   ],
   "gc_schedule_group_person_v": [],
   "gc_schedule_scheduler": [],
-  "gc_schedule_check_statistics_v": []
+  "gc_schedule_check_statistics_v": [],
+  "gc_schedule_demand": [],
+  "gc_schedule_roster": [],
+  "gc_schedule_rules": {
+    "maxConsecutiveDays": 5,
+    "whiteDayPerDay": 2,
+    "nightShiftPerDay": 2,
+    "month": "",
+    "year": ""
+  }
 }

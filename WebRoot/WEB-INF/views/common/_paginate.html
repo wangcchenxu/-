@@ -1,4 +1,4 @@
-<#macro paginate currentPage totalPage actionUrl ui urlParas="">
+<#macro paginate currentPage totalPage actionUrl ui totalRows="">
 	<#if (totalPage <= 0) || (currentPage > totalPage)><#return></#if>
 	<#local startPage = currentPage - 4>
 	<#if (startPage < 1)><#local startPage = 1></#if>
@@ -29,23 +29,23 @@
 			</#if>
 			
 			<#if (currentPage > 8)>
-				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${1}')">#{1}</a></li>
-				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${2}')">#{2}</a></li>
+				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${1}')">${1}</a></li>
+				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${2}')">${2}</a></li>
 				<li><a href="#" class="gap">…</a></li>
 			</#if>
 			
 			<#list startPage..endPage as i>
 				<#if currentPage == i>
-					<li class="active"><a href="#">#{i}<span class="sr-only">(current)</span></a></li>
+					<li class="active"><a href="#">${i}<span class="sr-only">(current)</span></a></li>
 				<#else>
-					<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${i}')">#{i}</a><li>
+					<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${i}')">${i}</a><li>
 				</#if>
 			</#list>
 			
 			<#if ((totalPage - currentPage) >= 8)>
 				<li><a href="#" class="gap">…</a></li>
-				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${totalPage - 1}')">#{totalPage - 1}</a><li>
-				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${totalPage}')">#{totalPage}</a><li>
+				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${totalPage - 1}')">${totalPage - 1}</a><li>
+				<li><a href="#" onclick="loadUIAndRender('${actionUrl}','${ui}&pno=${totalPage}')">${totalPage}</a><li>
 			</#if>
 			
 			<#if (currentPage == totalPage)>
@@ -63,7 +63,7 @@
 			</#if>
 			
 	</ul>
-	<#if totalRows??>
+	<#if totalRows?has_content>
 		<ul  style="float:right;list-style:none;"><li>（共${totalRows}条记录）</li></ul>
 			</#if>
 </#macro>

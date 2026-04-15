@@ -50,26 +50,18 @@
 			<#list resultPage.getList() as x>
 			<tr>
 				<td style="text-align:center;">${(x.pid)!}</td>
-				<td style="text-align:center;"><span href="javascript:void(0)" style="background-color:${(x.color)!}" class="form-control"></span></td>
+				<td style="text-align:center;"><span href="javascript:void(0)" style="background-color:${(x.color)!};color:#fff;display:block;padding:8px 3px;min-width:80px;text-align:center;" class="form-control">${(x.planName)!}</span></td>
 				<td style="text-align:center;">${(x.planName)!}</td>
-				<td style="text-align:center;"><#if x.defineType==1>系统定义<#else>自定义</#if></td>
-				<td style="text-align:center;"><#if x.planType==1>工作<#elseif x.planType==2>非工作<#else>其他</#if></td>
+				<td style="text-align:center;">${(x.defineTypeName)!}</td>
+				<td style="text-align:center;">${(x.planTypeName)!}</td>
 				<td style="text-align:center;">${(x.periodTime)!}</td>
 				<td style="text-align:center;">${(x.totalTime)!}</td>
-				<td style="text-align:center;">
-				<#if x.defineType==2>
-					&nbsp;&nbsp;<span class="disabled"><a href="#delModal" data-toggle="modal" onclick="setPlanDelPid(${(x.pid)!},'${(x.planName)!}')">删除</a></span>
-					&nbsp;&nbsp;<span class="disabled"><a href="#" onclick="setPlanModifiedPid(${(x.pid)!})">修改</a></span>
-				<#else>
-					<span class="disabled">锁定</span> 
-				</#if>	
-				</td>
+				<td style="text-align:center;">${(x.operationHtml)!}</td>
 			</tr>
 			</#list>
 		</tbody>
 	</table>
-	<#include "../common/_paginate.html" />
-	<@paginate currentPage=resultPage.pageNumber totalPage=resultPage.totalPage actionUrl="plan" ui="WEB-INF/views/planset/plan.html" />
+	<@paginate currentPage=resultPage.pageNumber totalPage=resultPage.totalPage actionUrl="plan" ui="WEB-INF/views/planset/plan.html" totalRows=resultPage.totalRow />
 </div>
 <div class="modal small fade" id="delModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true" style="display: none;">
   <div class="modal-dialog">

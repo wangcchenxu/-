@@ -39,10 +39,6 @@ define(function(require, exports, module) {
     exports.editRow = function(index, row) {
             if (editIndex != index) {
                 if (endEditing()) {
-                    if (row.lock == 1 && config.options.lockData) {
-                        messageShow('记录被锁定，不可编辑！');
-                        return;
-                    }
                     $('#persondg').datagrid('selectRow', index).datagrid('beginEdit', index);
                     editIndex = index;
                 } else {
