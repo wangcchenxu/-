@@ -9,10 +9,9 @@
 </div>
 
 <div class="main-content">
-    <!-- 第一步：员工需求 -->
-    <div id="schedule_step1" class="schedule-step" style="display:block;">
-        <h3>第一步：员工假期需求</h3>
-        <p>记录员工在指定月份内需要休息的具体日期</p>
+    <div id="schedule_step1" class="schedule-step">
+        <h3>员工假期需求</h3>
+        <p>记录员工在指定月份内需要休息的具体日期，保存后将自动生成班表</p>
         <div style="margin: 20px 0;">
             <label>选择月份：</label>
             <input type="month" id="schedule_month" style="padding:5px 10px;font-size:14px;">
@@ -29,31 +28,35 @@
             <tbody id="schedule_demand_body">
             </tbody>
         </table>
-        <button type="button" id="schedule_step1_save" class="btn btn-success" style="margin-top:10px;">保存员工需求</button>
-        <button type="button" id="schedule_generate_btn" class="btn btn-primary" style="margin-top:10px; margin-left:10px;">生成班表</button>
-        <div id="schedule_roster_container" style="overflow-x:auto; margin-top:20px;">
-            <table id="schedule_roster_table" class="table table-bordered table-condensed">
-                <thead id="schedule_roster_head">
-                </thead>
-                <tbody id="schedule_roster_body">
-                </tbody>
+        <button type="button" id="schedule_step1_save" class="btn btn-success" style="margin-top:10px;">
+            <i class="fa fa-save"></i> 保存并生成班表
+        </button>
+    </div>
+    
+    <div id="schedule_roster_section" style="display:none; margin-top:30px;">
+        <h3>生成的班表</h3>
+        <div id="schedule_roster_container" style="overflow-x:auto; margin-top:20px; max-height:600px;">
+            <table id="schedule_roster_table" class="table table-bordered table-condensed" style="border-collapse:collapse;width:100%;font-size:12px;">
+                <thead id="schedule_roster_head"></thead>
+                <tbody id="schedule_roster_body"></tbody>
             </table>
         </div>
-        <button type="button" id="schedule_export_btn" class="btn btn-success" style="margin-top:10px;">导出班表</button>
+        <button type="button" id="schedule_export_btn" class="btn btn-success" style="margin-top:10px;">
+            <i class="fa fa-download"></i> 导出班表
+        </button>
     </div>
 </div>
 
 <script type="text/javascript">
-$(document).ready(function() {
+$(function() {
+    console.log('排班管理页面加载...');
     var currentMonth = new Date().toISOString().substring(0, 7);
     $('#schedule_month').val(currentMonth);
     
-    // 页面状态
-    var step1Saved = false;
     var scheduleGenerated = false;
     var generatedMonth = null;
-    var lastGeneratedDemands = null;
     var personList = [];
+    var currentRoster = null;
 
     function getSchedulePageState() {
         return JSON.parse(localStorage.getItem('schedule_page_state') || '{}');
@@ -82,24 +85,19 @@ $(document).ready(function() {
     function collectCurrentDemands() {
         var month = $('#schedule_month').val();
         var demands = [];
-        $('.schedule-rest-days').each(function() {
-            var pid = $(this).data('pid');
-            var restDays = $(this).val();
-            var workDays = parseInt($('.schedule-work-days[data-pid="' + pid + '"]').val(), 10) || 0;
-            if (restDays || workDays) {
-                demands.push({
-                    pid: pid,
-                    month: month,
-                    restDays: restDays,
-                    workDays: workDays
-                });
-            }
+        $('#schedule_demand_body tr').each(function() {
+            var pid = $(this).find('.schedule-work-days').data('pid');
+            var restDays = $(this).find('.schedule-rest-days').val();
+            var workDays = parseInt($(this).find('.schedule-work-days').val(), 10);
+            if (isNaN(workDays) || workDays < 0) workDays = 15;
+            demands.push({
+                pid: pid,
+                month: month,
+                restDays: restDays,
+                workDays: workDays
+            });
         });
         return demands;
-    }
-
-    function updateStepButtons() {
-        $('#schedule_generate_btn').prop('disabled', false);
     }
 
     function restorePageState() {
@@ -113,14 +111,14 @@ $(document).ready(function() {
     function restoreRosterForMonth(month) {
         var savedRoster = getSavedRosterForMonth(month);
         if (savedRoster) {
+            currentRoster = savedRoster;
             renderRoster(savedRoster);
             scheduleGenerated = true;
             generatedMonth = month;
-            lastGeneratedDemands = JSON.stringify(getSavedDemandsForMonth(month));
+            $('#schedule_roster_section').show();
         }
     }
 
-    // 需求存储
     function getSavedDemandsForMonth(month) {
         var all = JSON.parse(localStorage.getItem('schedule_demands') || '{}');
         return all[month] || [];
@@ -132,19 +130,8 @@ $(document).ready(function() {
         localStorage.setItem('schedule_demands', JSON.stringify(all));
     }
 
-    // 历史排班存储
-    function getSavedHistory() {
-        return JSON.parse(localStorage.getItem('schedule_history') || '{}');
-    }
-
-    function saveHistoryForMonth(month, history) {
-        var all = getSavedHistory();
-        all[month] = history;
-        localStorage.setItem('schedule_history', JSON.stringify(all));
-    }
-
     function getHistoryForMonth(month) {
-        var all = getSavedHistory();
+        var all = JSON.parse(localStorage.getItem('schedule_history') || '{}');
         return all[month] || null;
     }
 
@@ -162,237 +149,597 @@ $(document).ready(function() {
         var savedDemands = getSavedDemandsForMonth(month);
         var [year, monthStr] = month.split('-');
         var daysInMonth = new Date(year, monthStr, 0).getDate();
-        var defaultWorkDays = daysInMonth % 2 === 0 ? daysInMonth / 2 : '';
+        
+        console.log('加载人员列表...');
         $.ajax({
             url: '/FinalScheduler/queryPerson',
             type: 'GET',
             dataType: 'json',
             success: function(data) {
+                console.log('人员数据:', data);
                 var html = '';
                 var rows = data.slice();
-                for (var i = rows.length; i < 8; i++) {
-                    rows.push({ pid: 'empty_' + (i + 1), name: '员工' + (i + 1) });
+                if (rows.length === 0) {
+                    for (var i = 1; i <= 8; i++) {
+                        rows.push({ pid: 'default_' + i, name: '员工' + i });
+                    }
                 }
+                
                 rows.forEach(function(person) {
                     var demand = savedDemands.find(function(item) { return item.pid === person.pid; }) || {};
-                    var workDaysValue = demand.workDays || defaultWorkDays || '';
+                    var workDaysValue = demand.workDays || 15;
                     html += '<tr>';
                     html += '<td>' + person.name + '</td>';
-                    html += '<td><input type="number" min="0" class="schedule-work-days" data-pid="' + person.pid + '" value="' + workDaysValue + '" placeholder="请输入天数" style="width:100%;padding:5px;"></td>';
+                    html += '<td><input type="number" min="0" max="' + daysInMonth + '" class="schedule-work-days" data-pid="' + person.pid + '" value="' + workDaysValue + '" style="width:100%;padding:5px;"></td>';
                     html += '<td><input type="text" class="schedule-rest-days" data-pid="' + person.pid + '" value="' + (demand.restDays || '') + '" placeholder="例：5,6,12,13" style="width:100%;padding:5px;"></td>';
-                    html += '<td><button type="button" class="btn btn-xs btn-danger schedule-delete-demand" data-pid="' + person.pid + '">删除</button></td>';
+                    html += '<td><button type="button" class="btn btn-xs btn-danger schedule-delete-demand" data-pid="' + person.pid + '"><i class="fa fa-trash"></i> 删除</button></td>';
                     html += '</tr>';
                 });
                 $('#schedule_demand_body').html(html);
                 personList = rows;
-                step1Saved = savedDemands.length > 0;
-                updateStepButtons();
+                restoreRosterForMonth(month);
+            },
+            error: function(xhr, status, error) {
+                console.error('加载人员列表失败:', error);
+                var html = '';
+                for (var i = 1; i <= 8; i++) {
+                    var pid = 'default_' + i;
+                    var demand = savedDemands.find(function(item) { return item.pid === pid; }) || {};
+                    var workDaysValue = demand.workDays || 15;
+                    html += '<tr>';
+                    html += '<td>员工' + i + '</td>';
+                    html += '<td><input type="number" min="0" max="' + daysInMonth + '" class="schedule-work-days" data-pid="' + pid + '" value="' + workDaysValue + '" style="width:100%;padding:5px;"></td>';
+                    html += '<td><input type="text" class="schedule-rest-days" data-pid="' + pid + '" value="' + (demand.restDays || '') + '" placeholder="例：5,6,12,13" style="width:100%;padding:5px;"></td>';
+                    html += '<td><button type="button" class="btn btn-xs btn-danger schedule-delete-demand" data-pid="' + pid + '"><i class="fa fa-trash"></i> 删除</button></td>';
+                    html += '</tr>';
+                }
+                $('#schedule_demand_body').html(html);
+                personList = [];
+                for (var i = 1; i <= 8; i++) {
+                    personList.push({ pid: 'default_' + i, name: '员工' + i });
+                }
                 restoreRosterForMonth(month);
             }
         });
     }
     
-    // 保存第一步
-    $('#schedule_step1_save').click(function() {
+    // 绑定保存按钮事件 - 使用事件委托确保可靠性
+    $(document).on('click', '#schedule_step1_save', function() {
+        console.log('点击保存并生成班表按钮');
         var month = $('#schedule_month').val();
-        var demands = [];
-        $('.schedule-rest-days').each(function() {
-            var pid = $(this).data('pid');
-            var restDays = $(this).val();
-            var workDays = parseInt($('.schedule-work-days[data-pid="' + pid + '"]').val(), 10) || 0;
-            if (restDays || workDays) {
-                demands.push({
-                    pid: pid,
-                    month: month,
-                    restDays: restDays,
-                    workDays: workDays
-                });
-            }
-        });
-        saveDemandsForMonth(month, demands);
-        step1Saved = demands.length > 0;
-        updateStepButtons();
-
-        if (scheduleGenerated && generatedMonth === month) {
-            var currentDemandJson = JSON.stringify(demands);
-            if (currentDemandJson !== lastGeneratedDemands) {
-                if (confirm('假期需求有变动，是否重新生成班表？')) {
-                    generateRoster(demands, getCurrentRules());
-                }
-            }
+        var demands = collectCurrentDemands();
+        
+        console.log('收集到的需求:', demands);
+        
+        if (demands.length === 0) {
+            alert('请至少填写一个员工的需求');
+            return;
         }
-
+        
+        saveDemandsForMonth(month, demands);
         saveSchedulePageState();
-        alert('员工需求已保存');
-    });
-    
-    
-    function getCurrentRules() {
-        return {
+        
+        var rules = {
             whiteDayPerDay: 2,
             nightShiftPerDay: 2,
             minConsecutiveDays: 2,
             maxConsecutiveDays: 5
         };
-    }
-
-    $('#schedule_generate_btn').click(function() {
-        var month = $('#schedule_month').val();
-        var demands = collectCurrentDemands();
-        saveDemandsForMonth(month, demands);
-        step1Saved = demands.length > 0;
-        updateStepButtons();
-        saveSchedulePageState();
-        var rules = getCurrentRules();
+        
+        console.log('开始生成班表...');
         generateRoster(demands, rules);
     });
-    
+
     function generateRoster(demands, rules) {
-        $.ajax({
-            url: '/FinalScheduler/queryPerson',
-            type: 'GET',
-            dataType: 'json',
-            success: function(persons) {
-                if (!Array.isArray(persons) || persons.length === 0) {
-                    persons = [];
-                    for (var i = 1; i <= 8; i++) {
-                        persons.push({ pid: 'placeholder_' + i, name: '员工' + i, workPreference: '均可' });
-                    }
-                }
-                var roster = generateSchedule(persons, demands, rules);
-                renderRoster(roster);
-                scheduleGenerated = true;
-                generatedMonth = $('#schedule_month').val();
-                lastGeneratedDemands = JSON.stringify(demands);
-                saveRosterForMonth(generatedMonth, roster);
-                saveSchedulePageState();
+        console.log('执行generateRoster函数');
+        var persons = personList;
+        if (persons.length === 0) {
+            persons = [];
+            for (var i = 1; i <= 8; i++) {
+                persons.push({ pid: 'default_' + i, name: '员工' + i });
             }
-        });
+        }
+        
+        var roster = generateSchedule(persons, demands, rules);
+        currentRoster = roster;
+        renderRoster(roster);
+        scheduleGenerated = true;
+        generatedMonth = $('#schedule_month').val();
+        saveRosterForMonth(generatedMonth, roster);
+        saveSchedulePageState();
+        $('#schedule_roster_section').show();
+        
+        $('html, body').animate({
+            scrollTop: $('#schedule_roster_section').offset().top - 100
+        }, 500);
+        
+        console.log('班表生成完成');
     }
     
     function generateSchedule(persons, demands, rules) {
         var month = $('#schedule_month').val();
         var [year, monthStr] = month.split('-');
         var daysInMonth = new Date(year, monthStr, 0).getDate();
-        var roster = {
-            daysInMonth: daysInMonth,
-            month: month,
-            assignments: {},
-            persons: persons
-        };
-
-        var personDemands = {};
+        
+        console.log('生成' + month + '月班表，共' + daysInMonth + '天');
+        
+        var personRestDays = {};
         demands.forEach(function(d) {
-            personDemands[d.pid] = d.restDays ? d.restDays.split(',').map(x => parseInt(x.trim())).filter(Boolean) : [];
+            personRestDays[d.pid] = d.restDays ? d.restDays.split(',').map(function(x) { return parseInt(x.trim()); }).filter(function(x) { return !isNaN(x); }) : [];
         });
 
-        var employees = persons.map(function(p) {
-            var demand = demands.find(function(item) { return item.pid == p.pid; }) || {};
-            var required = parseInt(demand.workDays, 10);
-            if (!isFinite(required) || required <= 0) {
-                required = Math.floor(daysInMonth / 2);
-            }
-            return {
-                pid: p.pid,
+        var currentMonthHistory = getHistoryForMonth(month);
+        console.log('历史排班数据:', currentMonthHistory);
+
+        // 第一步：初始化员工数据结构
+        var demandsMap = {};
+        var restDaysMap = {};
+        demands.forEach(function(d) {
+            demandsMap[d.pid] = d.workDays;
+            restDaysMap[d.pid] = d.restDays;
+        });
+        
+        var employees = personList.map(function(p) {
+            var pid = p.pid || p.id;
+            var requiredDays = demandsMap[pid] || 0;
+            var restDays = restDaysMap[pid] || [];
+            
+            // 初始化员工数据
+            var emp = {
+                pid: pid,
                 name: p.name,
-                pref: (p.workPreference || '').trim(),
-                restDays: personDemands[p.pid] || [],
-                requiredDays: required,
+                assignments: {},
                 assignedDays: 0,
                 consecutive: 0,
                 lastShift: '',
-                assignments: {}
+                requiredDays: requiredDays,
+                restDays: restDays,
+                whiteDays: 0,  // 本月白班天数
+                nightDays: 0   // 本月夜班天数
             };
+            
+            // 获取历史班次差额
+            var balanceHistory = getShiftBalanceHistory();
+            var lastBalance = balanceHistory[pid];
+            if (lastBalance && lastBalance.month !== month) {
+                // 如果有历史记录，且不是同一个月，应用补偿逻辑
+                emp.shiftDebt = lastBalance.difference || 0; // 正数表示上月白班多，本月应多排夜班
+                console.log(p.name + ' 上月班次差额: ' + emp.shiftDebt + ' (正数=白班多, 负数=夜班多)');
+            } else {
+                emp.shiftDebt = 0;
+            }
+            
+            return emp;
         });
 
+        // 第二步：初始化上月末状态
         employees.forEach(function(emp) {
             var prevState = getPreviousMonthState(month, emp);
             emp.lastShift = prevState.lastShift;
             emp.consecutive = prevState.consecutive;
         });
 
+        // 第三步：应用历史排班数据并统计已用额度
+        var historicalDaysCount = 0;
+        console.log('检查历史数据:', currentMonthHistory);
+        
+        if (currentMonthHistory && currentMonthHistory.assignments) {
+            console.log('历史assignments结构:', Object.keys(currentMonthHistory.assignments));
+            
+            // 找出所有历史数据中最大的天数（只统计有实际班次的天数）
+            var allDays = [];
+            Object.keys(currentMonthHistory.assignments).forEach(function(pid) {
+                var empHistory = currentMonthHistory.assignments[pid];
+                var empDays = Object.keys(empHistory).filter(function(dayStr) {
+                    var day = parseInt(dayStr);
+                    var value = empHistory[dayStr];
+                    // 只统计白班或夜班的天数，忽略"休息"
+                    return value === '白班' || value === '夜班';
+                }).map(Number);
+                
+                console.log('员工' + pid + '的有效历史天数（白班/夜班）:', empDays.sort(function(a,b) { return a-b; }));
+                allDays = allDays.concat(empDays);
+            });
+            
+            if (allDays.length > 0) {
+                historicalDaysCount = Math.max.apply(null, allDays);
+            }
+            
+            console.log('历史排班覆盖天数:', historicalDaysCount);
+            console.log('所有有效历史天数:', allDays.sort(function(a,b) { return a-b; }));
+        } else {
+            console.log('没有历史排班数据');
+        }
+
+        // 第四步：应用历史排班的具体班次到assignments
+        if (currentMonthHistory && currentMonthHistory.assignments) {
+            employees.forEach(function(emp) {
+                if (currentMonthHistory.assignments[emp.pid]) {
+                    var empHistory = currentMonthHistory.assignments[emp.pid];
+                    Object.keys(empHistory).forEach(function(dayStr) {
+                        var day = parseInt(dayStr);
+                        var savedShift = empHistory[dayStr];
+                        
+                        // 只应用有实际班次的记录
+                        if (savedShift === '白班' || savedShift === '夜班') {
+                            emp.assignments[day] = savedShift;
+                            emp.assignedDays++;
+                        }
+                    });
+                }
+            });
+            
+            // 重新计算历史数据结束时的连续状态
+            employees.forEach(function(emp) {
+                var lastDay = historicalDaysCount;
+                if (lastDay > 0 && emp.assignments[lastDay]) {
+                    var lastShift = emp.assignments[lastDay];
+                    if (lastShift === '白班' || lastShift === '夜班') {
+                        emp.lastShift = lastShift === '白班' ? 'white' : 'night';
+                        var consecutive = 1;
+                        for (var i = lastDay - 1; i >= 1; i--) {
+                            if (emp.assignments[i] === lastShift) {
+                                consecutive++;
+                            } else {
+                                break;
+                            }
+                        }
+                        emp.consecutive = consecutive;
+                    }
+                }
+            });
+        }
+
+        // 打印每个员工的剩余需求
+        employees.forEach(function(emp) {
+            console.log(emp.name + ': 总需求' + emp.requiredDays + '天, 已分配' + emp.assignedDays + '天, 剩余' + (emp.requiredDays - emp.assignedDays) + '天');
+        });
+
+        // 辅助函数
         function isRestDay(emp, day) {
             return emp.restDays.indexOf(day) !== -1;
         }
-
+        
+        // 获取历史班次差额记录
+        function getShiftBalanceHistory() {
+            var history = JSON.parse(localStorage.getItem('shift_balance_history') || '{}');
+            return history;
+        }
+        
+        // 保存班次差额记录
+        function saveShiftBalanceHistory(balanceData) {
+            localStorage.setItem('shift_balance_history', JSON.stringify(balanceData));
+        }
+        
+        // 计算每个员工的白班/夜班差额
+        function calculateShiftBalance(employees, month) {
+            var balance = {};
+            
+            employees.forEach(function(emp) {
+                var whiteDays = 0;
+                var nightDays = 0;
+                
+                // 统计本月白班和夜班天数
+                for (var day = 1; day <= 31; day++) {
+                    if (emp.assignments[day] === '白班') {
+                        whiteDays++;
+                    } else if (emp.assignments[day] === '夜班') {
+                        nightDays++;
+                    }
+                }
+                
+                // 计算差额（正数表示白班多，负数表示夜班多）
+                var diff = whiteDays - nightDays;
+                
+                balance[emp.pid] = {
+                    name: emp.name,
+                    month: month,
+                    whiteDays: whiteDays,
+                    nightDays: nightDays,
+                    totalDays: whiteDays + nightDays,
+                    difference: diff, // 白班-夜班的差值
+                    note: diff > 0 ? '多上' + diff + '天白班' : (diff < 0 ? '多上' + (-diff) + '天夜班' : '白班夜班均衡')
+                };
+                
+                console.log(emp.name + ': 白班' + whiteDays + '天, 夜班' + nightDays + '天, 差额: ' + diff + ' (' + balance[emp.pid].note + ')');
+            });
+            
+            return balance;
+        }
+        
         function canWork(emp, day, shiftType) {
-            if (isRestDay(emp, day)) return false;
-            if (emp.assignedDays >= emp.requiredDays) return false;
-            if (emp.consecutive >= (rules.maxConsecutiveDays || 5)) return false;
-            if (emp.consecutive > 0 && emp.consecutive < (rules.minConsecutiveDays || 2) && emp.lastShift !== shiftType) return false;
+            // 检查用户指定的休息日
+            if (isRestDay(emp, day)) {
+                return false;
+            }
+            
+            // 检查是否已达上限
+            if (emp.assignedDays >= emp.requiredDays) {
+                return false;
+            }
+            
+            // 检查连续天数限制
+            if (emp.consecutive >= rules.maxConsecutiveDays) {
+                return false;
+            }
+            
             return true;
         }
 
-        function candidateScore(emp, shiftType) {
+        function calculateEmployeeScore(emp, day, shiftType) {
             var score = 0;
-            var displayShift = shiftType === 'white' ? '白班' : '夜班';
+            var shiftKey = shiftType === '白班' ? 'white' : 'night';
+
+            // 1. 班次均衡性评分（最高优先级，确保当月白班夜班均衡）
+            var whiteCount = 0, nightCount = 0;
+            for (var d = 1; d < day; d++) {
+                if (emp.assignments[d] === '白班') whiteCount++;
+                else if (emp.assignments[d] === '夜班') nightCount++;
+            }
+
+            var predictedDiff;
+            if (shiftKey === 'white') {
+                predictedDiff = Math.abs((whiteCount + 1) - nightCount);
+            } else {
+                predictedDiff = Math.abs(whiteCount - (nightCount + 1));
+            }
+
+            // 强均衡约束：差值≤1时最高分
+            if (predictedDiff <= 1) {
+                score += 300; // 完美均衡，最高分
+            } else if (predictedDiff <= 2) {
+                score += 150; // 差值2，中等分
+            } else if (predictedDiff <= 3) {
+                score += 50; // 差值3，低分
+            } else {
+                score -= 100; // 差值>3，强烈惩罚
+            }
+
+            // 2. 连续性评分（中等优先级，参考三月份模式：工作3天→休息2天）
+            if (emp.lastShift === shiftKey) {
+                if (emp.consecutive >= 1 && emp.consecutive <= 2) {
+                    score += 80 + emp.consecutive * 10; // 连续1-2天，鼓励继续
+                } else if (emp.consecutive === 3) {
+                    score += 40; // 连续3天，适度鼓励（接近上限）
+                } else if (emp.consecutive >= 4) {
+                    score -= 80; // 连续4天以上，强烈不鼓励
+                }
+            } else if (emp.consecutive === 0) {
+                score += 60; // 休息后重新开始，鼓励
+            }
+
+            // 3. 班次切换合理性
+            if (emp.lastShift && emp.lastShift !== shiftKey) {
+                var lastWorkDay = 0;
+                for (var d = day - 1; d >= 1; d--) {
+                    if (emp.assignments[d] && emp.assignments[d] !== '休息') {
+                        lastWorkDay = d;
+                        break;
+                    }
+                }
+                if (lastWorkDay > 0) {
+                    var restDays = day - lastWorkDay - 1;
+                    // 夜班转白班需要3天休息
+                    if (emp.lastShift === 'night' && shiftKey === 'white' && restDays < 3) {
+                        score -= 100; // 严格惩罚
+                    }
+                    // 白班转夜班需要2天休息
+                    if (emp.lastShift === 'white' && shiftKey === 'night' && restDays < 2) {
+                        score -= 100; // 严格惩罚
+                    }
+                    // 休息充分，加分
+                    if (restDays >= 2) {
+                        score += 30;
+                    }
+                }
+            }
+
+            // 5. 剩余需求评分（低优先级）
             var remaining = emp.requiredDays - emp.assignedDays;
-            score += remaining * 5;
-            if (emp.pref === displayShift) score += 30;
-            if (emp.pref === '均可') score += 10;
-            if (emp.pref && emp.pref !== displayShift && emp.pref !== '均可') score -= 20;
-            if (emp.lastShift === shiftType) score += 40;
-            score -= emp.consecutive * 2;
+            if (remaining > 0) {
+                score += remaining * 3;
+            }
+
             return score;
         }
 
-        function sortCandidates(list, shiftType) {
+        function candidateScore(emp, day, shiftType) {
+            // 已废弃，使用calculateEmployeeScore代替
+            return calculateEmployeeScore(emp, day, shiftType);
+        }
+
+        function sortCandidates(list, day, shiftType) {
             return list.sort(function(a, b) {
-                return candidateScore(b, shiftType) - candidateScore(a, shiftType);
+                var scoreA = candidateScore(a, day, shiftType);
+                var scoreB = candidateScore(b, day, shiftType);
+                return scoreB - scoreA;
             });
         }
 
-        for (var day = 1; day <= daysInMonth; day++) {
-            roster.assignments[day] = {};
-
+        // 第五步：从历史数据的下一天开始生成后续排班
+        var startDay = historicalDaysCount + 1;
+        console.log('从第' + startDay + '天开始生成新排班');
+        console.log('需要生成的天数: ' + startDay + ' 到 ' + daysInMonth);
+        
+        // 第一阶段：确保每天的基本配置（2白班+2夜班）
+        console.log('========== 第一阶段：基础排班 ==========');
+        for (var day = startDay; day <= daysInMonth; day++) {
+            console.log('========== 生成第' + day + '天 ==========');
+            
+            // 标记用户指定的休息日
             employees.forEach(function(emp) {
                 if (isRestDay(emp, day)) {
                     emp.assignments[day] = '休息';
-                    emp.consecutive = 0;
-                    emp.lastShift = '';
                 }
             });
-
-            var whiteAssigned = 0;
-            var whiteCandidates = employees.filter(function(emp) {
-                return !roster.assignments[day][emp.pid] && canWork(emp, day, 'white');
+            
+            // 获取所有可用员工
+            var allAvailable = employees.filter(function(emp) {
+                return !emp.assignments[day] && 
+                       !isRestDay(emp, day) && 
+                       emp.assignedDays < emp.requiredDays;
             });
-            whiteCandidates = sortCandidates(whiteCandidates, 'white');
-            while (whiteAssigned < (rules.whiteDayPerDay || 2) && whiteCandidates.length > 0) {
-                var emp = whiteCandidates.shift();
-                roster.assignments[day][emp.pid] = { shiftType: 'white', shiftName: '白班' };
+            
+            // 分配白班
+            var whiteSlots = [];
+            var assignedToday = [];
+            
+            for (var i = 0; i < rules.whiteDayPerDay; i++) {
+                var bestEmp = null;
+                var bestScore = -999999;
+                
+                allAvailable.forEach(function(emp) {
+                    if (assignedToday.indexOf(emp) !== -1) return;
+                    
+                    var score = calculateEmployeeScore(emp, day, '白班');
+                    
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestEmp = emp;
+                    }
+                });
+                
+                if (bestEmp) {
+                    whiteSlots.push(bestEmp);
+                    assignedToday.push(bestEmp);
+                }
+            }
+            
+            // 分配夜班
+            var nightSlots = [];
+            
+            for (var i = 0; i < rules.nightShiftPerDay; i++) {
+                var bestEmp = null;
+                var bestScore = -999999;
+                
+                allAvailable.forEach(function(emp) {
+                    if (assignedToday.indexOf(emp) !== -1) return;
+                    
+                    var score = calculateEmployeeScore(emp, day, '夜班');
+                    
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestEmp = emp;
+                    }
+                });
+                
+                if (bestEmp) {
+                    nightSlots.push(bestEmp);
+                    assignedToday.push(bestEmp);
+                }
+            }
+            
+            // 应用分配
+            whiteSlots.forEach(function(emp) {
                 emp.assignments[day] = '白班';
                 emp.assignedDays++;
-                emp.consecutive = emp.lastShift === 'white' ? emp.consecutive + 1 : 1;
+                emp.consecutive = (emp.lastShift === 'white' && emp.consecutive < rules.maxConsecutiveDays) ? emp.consecutive + 1 : 1;
                 emp.lastShift = 'white';
-                whiteAssigned++;
-            }
-
-            var nightAssigned = 0;
-            var nightCandidates = employees.filter(function(emp) {
-                return !roster.assignments[day][emp.pid] && canWork(emp, day, 'night');
             });
-            nightCandidates = sortCandidates(nightCandidates, 'night');
-            while (nightAssigned < (rules.nightShiftPerDay || 2) && nightCandidates.length > 0) {
-                var emp2 = nightCandidates.shift();
-                roster.assignments[day][emp2.pid] = { shiftType: 'night', shiftName: '夜班' };
-                emp2.assignments[day] = '夜班';
-                emp2.assignedDays++;
-                emp2.consecutive = emp2.lastShift === 'night' ? emp2.consecutive + 1 : 1;
-                emp2.lastShift = 'night';
-                nightAssigned++;
-            }
-
-            employees.forEach(function(emp) {
-                if (!roster.assignments[day][emp.pid]) {
-                    emp.assignments[day] = '休息';
-                    emp.consecutive = 0;
-                    emp.lastShift = '';
+            
+            nightSlots.forEach(function(emp) {
+                emp.assignments[day] = '夜班';
+                emp.assignedDays++;
+                emp.consecutive = (emp.lastShift === 'night' && emp.consecutive < rules.maxConsecutiveDays) ? emp.consecutive + 1 : 1;
+                emp.lastShift = 'night';
+            });
+            
+            console.log('第' + day + '天: 白班[' + whiteSlots.map(function(e) { return e.name; }).join(',') + '] 夜班[' + nightSlots.map(function(e) { return e.name; }).join(',') + ']');
+        }
+        
+        // 第二阶段：补充未完成员工的剩余天数
+        console.log('========== 第二阶段：补充分配 ==========');
+        var needSupplement = employees.filter(function(emp) {
+            return emp.assignedDays < emp.requiredDays;
+        });
+        
+        if (needSupplement.length > 0) {
+            console.log('需要补充的员工:', needSupplement.map(function(e) { 
+                return e.name + '(' + (e.requiredDays - e.assignedDays) + '天)'; 
+            }).join(', '));
+            
+            // 为每个未完成的员工找到空闲天补充
+            needSupplement.forEach(function(emp) {
+                var daysNeeded = emp.requiredDays - emp.assignedDays;
+                var daysAssigned = 0;
+                
+                for (var day = startDay; day <= daysInMonth && daysAssigned < daysNeeded; day++) {
+                    // 如果这一天该员工是休息且可以重新分配
+                    if (emp.assignments[day] === '休息' && !isRestDay(emp, day)) {
+                        // 决定分配白班还是夜班（优先保持连续性）
+                        var shiftType;
+                        if (emp.lastShift === 'white') {
+                            shiftType = '白班';
+                        } else if (emp.lastShift === 'night') {
+                            shiftType = '夜班';
+                        } else {
+                            shiftType = '白班'; // 默认白班
+                        }
+                        
+                        emp.assignments[day] = shiftType;
+                        emp.assignedDays++;
+                        daysAssigned++;
+                        
+                        var shiftKey = shiftType === '白班' ? 'white' : 'night';
+                        emp.consecutive = emp.consecutive >= rules.maxConsecutiveDays ? 1 : emp.consecutive + 1;
+                        emp.lastShift = shiftKey;
+                        
+                        console.log('补充第' + day + '天' + shiftType + '给: ' + emp.name + ' (连续' + emp.consecutive + '天, 已' + emp.assignedDays + '/' + emp.requiredDays + ')');
+                    }
                 }
             });
         }
-
-        roster.persons = employees;
+        
+        // 第三阶段：最终检查
+        console.log('========== 最终检查 ==========');
+        employees.forEach(function(emp) {
+            console.log(emp.name + ': 需求' + emp.requiredDays + '天, 已分配' + emp.assignedDays + '天' + 
+                       (emp.assignedDays < emp.requiredDays ? ' ⚠️ 未完成' : ' ✅'));
+        });
+        
+        // 第四阶段：统计并保存班次差额记录
+        console.log('========== 第四阶段：统计班次分布 ==========');
+        var shiftBalance = calculateShiftBalance(employees, month);
+        
+        // 保存到localStorage
+        saveShiftBalanceHistory(shiftBalance);
+        
+        // 显示详细的均衡情况
+        console.log('\n=== 当月白班/夜班均衡统计 ===');
+        var allBalanced = true;
+        employees.forEach(function(emp) {
+            var whiteCount = 0, nightCount = 0;
+            for (var d = 1; d <= 31; d++) {
+                if (emp.assignments[d] === '白班') whiteCount++;
+                else if (emp.assignments[d] === '夜班') nightCount++;
+            }
+            
+            var diff = Math.abs(whiteCount - nightCount);
+            var status = diff <= 1 ? '✅ 均衡' : '⚠️ 偏差' + diff + '天';
+            if (diff > 1) allBalanced = false;
+            
+            console.log(emp.name + ': 白班' + whiteCount + '天, 夜班' + nightCount + '天, 差值' + diff + '天 ' + status);
+        });
+        
+        if (allBalanced) {
+            console.log('\n🎉 所有员工当月白班/夜班分配均衡！');
+        } else {
+            console.log('\n⚠️ 部分员工白班/夜班存在偏差，下月将自动补偿');
+        }
+        
+        console.log('班次差额记录已保存，下月排班时将自动参考此记录进行补偿分配');
+        
+        var roster = {
+            daysInMonth: daysInMonth,
+            month: month,
+            assignments: employees.reduce(function(acc, emp) {
+                acc[emp.pid] = emp.assignments;
+                return acc;
+            }, {}),
+            persons: employees
+        };
+        
+        console.log('班表数据生成完成');
         return roster;
     }
 
@@ -420,10 +767,19 @@ $(document).ready(function() {
     }
 
     function renderRoster(roster) {
+        console.log('渲染班表...');
+        console.log('roster数据:', roster);
+        console.log('员工数量:', roster.persons ? roster.persons.length : 0);
+        if (roster.persons && roster.persons.length > 0) {
+            console.log('第一个员工第10天的排班:', roster.persons[0].assignments[10]);
+            console.log('第一个员工第15天的排班:', roster.persons[0].assignments[15]);
+            console.log('第一个员工第20天的排班:', roster.persons[0].assignments[20]);
+        }
+        
         var daysInMonth = roster.daysInMonth;
-        var headHtml = '<tr><th style="width:120px;">姓名</th>';
+        var headHtml = '<tr><th style="width:100px;position:sticky;left:0;z-index:5;background:#f5f5f5;">姓名</th>';
         for (var i = 1; i <= daysInMonth; i++) {
-            headHtml += '<th style="min-width:60px; text-align:center;">' + i + '</th>';
+            headHtml += '<th>' + i + '</th>';
         }
         headHtml += '</tr>';
         $('#schedule_roster_head').html(headHtml);
@@ -431,90 +787,103 @@ $(document).ready(function() {
         var bodyHtml = '';
         roster.persons.forEach(function(emp) {
             bodyHtml += '<tr>';
-            bodyHtml += '<td style="font-weight:bold; background:#f7f7f7;">' + emp.name + '</td>';
+            bodyHtml += '<td style="font-weight:bold;background:#f7f7f7;position:sticky;left:0;z-index:5;">' + emp.name + '</td>';
             for (var day = 1; day <= daysInMonth; day++) {
-                var assignment = emp.assignments[day];
-                var cellText = assignment || '休息';
-                var cellColor = '#f5f5f5';
+                var assignment = emp.assignments[day] || '休息';
+                var bgColor = '#d9edf7';
                 var textColor = '#333';
+                
                 if (assignment === '白班') {
-                    cellColor = '#f0ad4e';
+                    bgColor = '#f0ad4e';
                     textColor = '#fff';
-                    cellText = '白班';
                 } else if (assignment === '夜班') {
-                    cellColor = '#d9534f';
+                    bgColor = '#d9534f';
                     textColor = '#fff';
-                    cellText = '夜班';
-                } else if (assignment === '休息') {
-                    cellColor = '#d9edf7';
-                    textColor = '#333';
                 }
-                bodyHtml += '<td style="background:' + cellColor + '; color:' + textColor + '; text-align:center; vertical-align:middle;">' + cellText + '</td>';
+                
+                bodyHtml += '<td style="background:' + bgColor + ';color:' + textColor + ';text-align:center;font-weight:500;">' + assignment + '</td>';
             }
             bodyHtml += '</tr>';
         });
         $('#schedule_roster_body').html(bodyHtml);
+        console.log('班表渲染完成');
     }
 
-    $('#schedule_month').change(function() {
-        if (scheduleGenerated && $('#schedule_month').val() !== generatedMonth) {
-            scheduleGenerated = false;
-            generatedMonth = null;
-            lastGeneratedDemands = null;
-        }
+    $(document).on('change', '#schedule_month', function() {
+        scheduleGenerated = false;
+        generatedMonth = null;
+        currentRoster = null;
+        $('#schedule_roster_section').hide();
         loadPersonList();
         saveSchedulePageState();
     });
 
-    $('#schedule_demand_body').on('click', '.schedule-delete-demand', function() {
+    $(document).on('click', '#schedule_demand_body', '.schedule-delete-demand', function() {
         var pid = $(this).data('pid');
-        $('.schedule-work-days[data-pid="' + pid + '"]').val('');
-        $('.schedule-rest-days[data-pid="' + pid + '"]').val('');
+        $(this).closest('tr').remove();
         var demands = collectCurrentDemands();
         saveDemandsForMonth($('#schedule_month').val(), demands);
-        step1Saved = demands.length > 0;
-        updateStepButtons();
         saveSchedulePageState();
     });
 
-    $('#schedule_demand_body').on('change', '.schedule-work-days, .schedule-rest-days', function() {
-        var demands = collectCurrentDemands();
-        saveDemandsForMonth($('#schedule_month').val(), demands);
-        step1Saved = demands.length > 0;
-        updateStepButtons();
-        saveSchedulePageState();
+    $(document).on('click', '#schedule_export_btn', function() {
+        if (!scheduleGenerated || !currentRoster) {
+            alert('请先生成班表！');
+            return;
+        }
+
+        var month = $('#schedule_month').val();
+        var exportData = [];
+        var daysInMonth = currentRoster.daysInMonth;
+        
+        var header = ['姓名'];
+        for (var i = 1; i <= daysInMonth; i++) {
+            header.push(i + '日');
+        }
+        exportData.push(header);
+
+        currentRoster.persons.forEach(function(emp) {
+            var row = [emp.name || emp.pid];
+            for (var day = 1; day <= daysInMonth; day++) {
+                var assignment = emp.assignments[day] || '休息';
+                row.push(assignment);
+            }
+            exportData.push(row);
+        });
+
+        $.ajax({
+            url: '/FinalScheduler/export/schedule',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                month: month,
+                data: exportData
+            }),
+            xhrFields: {
+                responseType: 'blob'
+            },
+            success: function(response) {
+                var blob = new Blob([response], {
+                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                });
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = month + '_班表.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            },
+            error: function(xhr, status, error) {
+                console.error('导出失败:', error);
+                alert('导出班表失败，请稍后重试！');
+            }
+        });
     });
 
+    console.log('初始化排班管理页面');
     restorePageState();
     loadPersonList();
-    updateStepButtons();
 });
 </script>
-
-<style>
-.schedule-step {
-    padding: 20px;
-    background: #fff;
-    margin: 10px 0;
-    border-radius: 4px;
-}
-.schedule-step h3 {
-    margin-top: 0;
-    color: #333;
-}
-#schedule_roster_table {
-    border-collapse: collapse;
-    width: 100%;
-}
-#schedule_roster_table th,
-#schedule_roster_table td {
-    padding: 6px 10px;
-    border: 1px solid #e1e1e1;
-    white-space: nowrap;
-}
-#schedule_roster_table th {
-    background: #fcfcfc;
-    text-align: center;
-}
-</style>
-

@@ -3,6 +3,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
+const XLSX = require('xlsx');
 
 const app = express();
 const APP_ROOT = path.join(__dirname, 'WebRoot');
@@ -13,11 +14,19 @@ const STORE_FILE = path.join(DATA_DIR, 'store.json');
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
+// 禁用静态资源缓存，确保刷新页面能看到最新改动
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 const DEFAULT_STORE = {
   gc_schedule_person: [],
   gc_common_dict: [
-    { domainName: '�Ա�', dictCode: '1', dictName: '��' },
-    { domainName: '�Ա�', dictCode: '2', dictName: 'Ů' }
+    { domainName: '性别', dictCode: '1', dictName: '男' },
+    { domainName: '性别', dictCode: '2', dictName: '女' }
   ],
   gc_schedule_plan: [],
   gc_schedule_planorder: [],
@@ -265,7 +274,6 @@ function getValueFromContext(context, expr) {
   const cleaned = expr.trim();
   if (!cleaned) return '';
   
-  // Check if expression contains method call like obj.method()
   const methodCallMatch = cleaned.match(/^(\w+(?:\.\w+)*)\.(\w+)\(\)$/);
   if (methodCallMatch) {
     const baseExpr = methodCallMatch[1];
@@ -291,11 +299,9 @@ function getValueFromContext(context, expr) {
   return value == null ? '' : value;
 }
 
-
 function replaceVariables(content, context) {
   let result = content;
 
-  // First handle <#list> loops before replacing global variables
   result = result.replace(/<#list\s+([\w.()]+)\s+as\s+(\w+)>([\s\S]*?)<\/#list>/g, (match, listExpr, itemVar, body) => {
     let items = getValueFromContext(context, listExpr);
     
@@ -309,13 +315,10 @@ function replaceVariables(content, context) {
       const itemContext = { ...context, [itemVar]: item, item_index: idx };
       let itemBody = body;
       
-      // Replace variables with item context
       itemBody = itemBody
         .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(itemContext, expr))
         .replace(/\$\{([^}]+)\}!?/g, (_, expr) => getValueFromContext(itemContext, expr));
       
-      // Handle nested <#if> statements - process more complex patterns first
-      // Pattern: <#if varExpr==numValue>body1<#elseif varExpr2==numValue2>body2<#else>body3</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#elseif ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#else>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2, body3) => {
         const checkVal1 = getValueFromContext(itemContext, var1);
         if (String(checkVal1) === String(val1)) {
@@ -328,7 +331,6 @@ function replaceVariables(content, context) {
         return body3;
       });
 
-      // Pattern: <#if varExpr==numValue>body1<#elseif varExpr2==numValue2>body2</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#elseif ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2) => {
         const checkVal1 = getValueFromContext(itemContext, var1);
         if (String(checkVal1) === String(val1)) {
@@ -341,7 +343,6 @@ function replaceVariables(content, context) {
         return '';
       });
 
-      // Pattern: <#if varExpr==numValue>body1<#else>body2</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#else>([\s\S]*?)<\/#if>/g, (match, varExpr, compareVal, body1, body2) => {
         const val = getValueFromContext(itemContext, varExpr);
         if (String(val) === String(compareVal)) {
@@ -350,7 +351,6 @@ function replaceVariables(content, context) {
         return body2;
       });
 
-      // Pattern: <#if varExpr==numValue>body</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([^<]*?)<\/#if>/g, (match, varExpr, compareVal, body) => {
         const val = getValueFromContext(itemContext, varExpr);
         if (String(val) === String(compareVal)) {
@@ -363,12 +363,10 @@ function replaceVariables(content, context) {
     }).join('');
   });
 
-  // Then handle global variables
   result = result
     .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(context, expr))
     .replace(/\$\{([^}]+)\}!?/g, (_, expr) => getValueFromContext(context, expr));
 
-  // Handle <#if> statements at global level
   result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#\/if>/g, (match, varExpr, compareVal, body) => {
     const val = getValueFromContext(context, varExpr);
     if (String(val) === String(compareVal)) {
@@ -401,10 +399,8 @@ function replaceVariables(content, context) {
 }
 
 function evaluateExpression(expr, context) {
-  // Simple expression evaluator for basic arithmetic and variable access
   const trimmed = expr.trim();
   
-  // Handle arithmetic: currentPage - 4
   const arithmeticMatch = trimmed.match(/^(\w+)\s*([+\-*/])\s*(.+)$/);
   if (arithmeticMatch) {
     const left = getValueFromContext(context, arithmeticMatch[1]);
@@ -422,7 +418,6 @@ function evaluateExpression(expr, context) {
     }
   }
   
-  // Handle comparisons: (totalPage <= 0) || (currentPage > totalPage)
   const comparisonMatch = trimmed.match(/^(\w+)\s*([<>=!]+)\s*(.+)$/);
   if (comparisonMatch) {
     const left = getValueFromContext(context, comparisonMatch[1]);
@@ -442,7 +437,6 @@ function evaluateExpression(expr, context) {
     }
   }
   
-  // Handle logical OR: (condition1) || (condition2)
   const orMatch = trimmed.match(/^\((.+)\)\s*\|\|\s*\((.+)\)$/);
   if (orMatch) {
     const left = evaluateExpression(orMatch[1], context);
@@ -450,25 +444,21 @@ function evaluateExpression(expr, context) {
     return left || right;
   }
   
-  // Handle parentheses: (expression)
   const parenMatch = trimmed.match(/^\((.+)\)$/);
   if (parenMatch) {
     return evaluateExpression(parenMatch[1], context);
   }
   
-  // Handle numbers
   if (/^\d+$/.test(trimmed)) {
     return parseInt(trimmed, 10);
   }
   
-  // Handle variables
   return getValueFromContext(context, trimmed);
 }
 
 function replaceVariablesExtended(content, context) {
   let result = content;
 
-  // First handle <#list> loops before replacing global variables
   result = result.replace(/<#list\s+([\w.()]+)\s+as\s+(\w+)>([\s\S]*?)<\/#list>/g, (match, listExpr, itemVar, body) => {
     let items = getValueFromContext(context, listExpr);
     
@@ -482,25 +472,20 @@ function replaceVariablesExtended(content, context) {
       const itemContext = { ...context, [itemVar]: item, item_index: idx };
       let itemBody = body;
       
-      // Handle <#local> variable assignments in the loop body
       itemBody = itemBody.replace(/<#local\s+(\w+)\s*=\s*(.+?)>/g, (match, varName, expr) => {
         const value = evaluateExpression(expr, itemContext);
         itemContext[varName] = value;
         return '';
       });
       
-      // Handle <#return> statements
       itemBody = itemBody.replace(/<#return>/g, () => {
-        return ''; // Skip the rest of the loop body
+        return '';
       });
       
-      // Replace variables with item context
       itemBody = itemBody
         .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(itemContext, expr))
         .replace(/\$\{([^}]+)\)!?/g, (_, expr) => getValueFromContext(itemContext, expr));
       
-      // Handle nested <#if> statements - process more complex patterns first
-      // Pattern: <#if varExpr==numValue>body1<#elseif varExpr2==numValue2>body2<#else>body3</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#elseif ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#else>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2, body3) => {
         const checkVal1 = getValueFromContext(itemContext, var1);
         if (String(checkVal1) === String(val1)) {
@@ -513,7 +498,6 @@ function replaceVariablesExtended(content, context) {
         return body3;
       });
 
-      // Pattern: <#if varExpr==numValue>body1<#elseif varExpr2==numValue2>body2</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#elseif ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2) => {
         const checkVal1 = getValueFromContext(itemContext, var1);
         if (String(checkVal1) === String(val1)) {
@@ -526,7 +510,6 @@ function replaceVariablesExtended(content, context) {
         return '';
       });
 
-      // Pattern: <#if varExpr==numValue>body1<#else>body2</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([\s\S]*?)<#else>([\s\S]*?)<\/#if>/g, (match, varExpr, compareVal, body1, body2) => {
         const val = getValueFromContext(itemContext, varExpr);
         if (String(val) === String(compareVal)) {
@@ -535,7 +518,6 @@ function replaceVariablesExtended(content, context) {
         return body2;
       });
 
-      // Pattern: <#if varExpr==numValue>body</#if>
       itemBody = itemBody.replace(/<#if ([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)==(\d+)>([^<]*?)<\/#if>/g, (match, varExpr, compareVal, body) => {
         const val = getValueFromContext(itemContext, varExpr);
         if (String(val) === String(compareVal)) {
@@ -544,7 +526,6 @@ function replaceVariablesExtended(content, context) {
         return '';
       });
       
-      // Handle range-based loops like <#list startPage..endPage as i>
       itemBody = itemBody.replace(/<#list\s+(\w+)\.\.(\w+)\s+as\s+(\w+)>([\s\S]*?)<\/#list>/g, (match, startVar, endVar, loopVar, loopBody) => {
         const start = getValueFromContext(itemContext, startVar);
         const end = getValueFromContext(itemContext, endVar);
@@ -565,19 +546,16 @@ function replaceVariablesExtended(content, context) {
     }).join('');
   });
 
-  // Handle <#local> variable assignments at global level
   result = result.replace(/<#local\s+(\w+)\s*=\s*(.+?)>/g, (match, varName, expr) => {
     const value = evaluateExpression(expr, context);
     context[varName] = value;
     return '';
   });
 
-  // Handle <#return> statements at global level
   result = result.replace(/<#return>/g, () => {
-    return ''; // Skip the rest
+    return '';
   });
 
-  // Handle complex <#if> conditions with expressions
   result = result.replace(/<#if\s+\((.+?)\)\s*\|\|\s*\((.+?)\)>[\s\S]*?<\/#if>/g, (match, cond1, cond2, body) => {
     const val1 = evaluateExpression(cond1, context);
     const val2 = evaluateExpression(cond2, context);
@@ -587,12 +565,10 @@ function replaceVariablesExtended(content, context) {
     return '';
   });
 
-  // Then handle global variables
   result = result
     .replace(/\$\{\(([^)]+)\)!?\}/g, (_, expr) => getValueFromContext(context, expr))
     .replace(/\$\{([^}]+)\)!?/g, (_, expr) => getValueFromContext(context, expr));
 
-  // Handle <#if> statements at global level
   result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#\/if>/g, (match, varExpr, compareVal, body) => {
     const val = getValueFromContext(context, varExpr);
     if (String(val) === String(compareVal)) {
@@ -623,9 +599,6 @@ function replaceVariablesExtended(content, context) {
 
   return result;
 }
-
-
-
 
 async function renderTemplate(templatePath, context = {}) {
   const absolutePath = sanitizeTemplatePath(templatePath);
@@ -684,6 +657,45 @@ function getRawSelect(req) {
 function getRawOrder(req) {
   return req.body.orderString || req.query.orderString || '';
 }
+
+// 导出班表接口 (POST - 接收前端数据)
+app.post('/FinalScheduler/export/schedule', (req, res) => {
+  try {
+    const { month, data } = req.body;
+    
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return res.status(400).send('无效的班表数据');
+    }
+
+    // 1. 创建工作表
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // 2. 设置列宽
+    const colWidths = [{ wch: 15 }];
+    for (let i = 1; i < data[0].length; i++) {
+      colWidths.push({ wch: 10 });
+    }
+    ws['!cols'] = colWidths;
+
+    // 3. 创建工作簿并附加工作表
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, month + '班表');
+
+    // 4. 生成 buffer
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    // 5. 设置响应头，触发浏览器下载
+    const filename = `${month}_班表.xlsx`;
+    res.setHeader('Content-Disposition', `attachment; filename=${encodeURIComponent(filename)}`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    
+    // 6. 发送文件
+    res.send(buf);
+  } catch (error) {
+    console.error('导出失败:', error);
+    res.status(500).send('导出班表失败: ' + error.message);
+  }
+});
 
 app.post('/FinalScheduler/*', renderTemplateRoute);
 app.get('/FinalScheduler/*', renderTemplateRoute);

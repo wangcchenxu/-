@@ -75,8 +75,28 @@ $(document).ready(function() {
     $('#history_save_btn').click(function() {
         var month = $('#history_month').val();
         var history = collectHistoryTable(month);
-        saveHistoryForMonth(month, history);
-        alert('历史排班已保存');
+        
+        // 清理历史数据：只保留有实际班次的天数（白班/夜班）
+        var cleanedHistory = { month: month, assignments: {} };
+        Object.keys(history.assignments).forEach(function(pid) {
+            cleanedHistory.assignments[pid] = {};
+            Object.keys(history.assignments[pid]).forEach(function(dayStr) {
+                var day = parseInt(dayStr);
+                var value = history.assignments[pid][dayStr];
+                // 只保存前9天且有实际班次的记录
+                if (day <= 9 && (value === '白班' || value === '夜班')) {
+                    cleanedHistory.assignments[pid][day] = value;
+                }
+            });
+            // 如果该员工没有任何有效数据，删除这个key
+            if (Object.keys(cleanedHistory.assignments[pid]).length === 0) {
+                delete cleanedHistory.assignments[pid];
+            }
+        });
+        
+        saveHistoryForMonth(month, cleanedHistory);
+        console.log('历史排班已保存并清理：', cleanedHistory);
+        alert('历史排班已保存（只保留前9天的班次数据）');
     });
 
     $('#history_month').change(function() {
@@ -134,7 +154,11 @@ $(document).ready(function() {
             history.assignments[pid] = {};
             $(this).find('.history-cell').each(function() {
                 var day = $(this).data('day');
-                history.assignments[pid][day] = $(this).text();
+                var value = $(this).text();
+                // 只保存有实际班次的天数（白班/夜班），不保存"休息"
+                if (value === '白班' || value === '夜班') {
+                    history.assignments[pid][day] = value;
+                }
             });
         });
         return history;

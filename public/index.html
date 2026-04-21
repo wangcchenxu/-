@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>排班系统</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .controls { margin-bottom: 20px; }
+        button { padding: 10px 20px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background-color: #0056b3; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>排班管理系统</h1>
+    
+    <div class="controls">
+        <!-- 新增导出按钮 -->
+        <button id="exportBtn">导出班表 (Excel)</button>
+    </div>
+
+    <!-- 示例班表展示区域 -->
+    <table id="scheduleTable">
+        <thead>
+            <tr>
+                <th>日期</th>
+                <th>星期</th>
+                <th>早班</th>
+                <th>中班</th>
+                <th>晚班</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- 数据将由 JS 动态填充或后端渲染 -->
+            <tr>
+                <td>2023-10-01</td>
+                <td>周日</td>
+                <td>张三</td>
+                <td>李四</td>
+                <td>王五</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <script>
+        // 导出功能实现
+        document.getElementById('exportBtn').addEventListener('click', async () => {
+            try {
+                // 发送请求到后端导出接口
+                const response = await fetch('/export/schedule');
+                
+                if (!response.ok) {
+                    throw new Error('网络响应异常');
+                }
+
+                // 获取 blob 数据
+                const blob = await response.blob();
+                
+                // 创建临时下载链接
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'schedule.xlsx'; // 下载文件名
+                
+                // 触发点击
+                document.body.appendChild(a);
+                a.click();
+                
+                // 清理
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                alert('班表导出成功！');
+            } catch (error) {
+                console.error('导出错误:', error);
+                alert('导出失败，请稍后重试');
+            }
+        });
+    </script>
+</body>
+</html>
