@@ -17,6 +17,12 @@
             <input type="month" id="history_month" style="padding:5px 10px;font-size:14px;">
             <button type="button" id="history_load_btn" class="btn btn-default" style="margin-left:10px;">加载历史排班</button>
             <button type="button" id="history_save_btn" class="btn btn-success" style="margin-left:10px;">保存历史排班</button>
+            <button type="button" id="history_clear_btn" class="btn btn-warning" style="margin-left:10px;">清空本月数据</button>
+            <span id="save_status" style="margin-left:10px; color:#28a745; display:none;">
+                <i class="fa fa-check"></i> 已同步到服务器
+            </span>
+            <button type="button" id="history_import_btn" class="btn btn-primary" style="margin-left:10px;">从Excel导入</button>
+            <input type="file" id="history_import_file" accept=".xlsx,.xls" style="display:none;">
         </div>
         <div id="history_roster_container" style="overflow-x:auto;">
             <table id="history_roster_table" class="table table-bordered table-condensed">
@@ -52,6 +58,48 @@ $(document).ready(function() {
         return all[month] || null;
     }
 
+    // 保存到后端服务器
+    function saveHistoryToBackend(month, history) {
+        $.ajax({
+            url: '/FinalScheduler/api/saveHistory',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                month: month,
+                history: history
+            }),
+            success: function(response) {
+                console.log('后端保存成功:', response);
+                $('#save_status').fadeIn().delay(2000).fadeOut();
+            },
+            error: function(xhr, status, error) {
+                console.error('后端保存失败:', error);
+                alert('保存到服务器失败，但数据已保存在浏览器本地。\n\n错误：' + error);
+            }
+        });
+    }
+
+    // 从后端加载历史数据
+    function loadHistoryFromBackend(month) {
+        $.ajax({
+            url: '/FinalScheduler/api/loadHistory?month=' + month,
+            type: 'GET',
+            dataType: 'json',
+            success: function(response) {
+                if (response && response.history) {
+                    console.log('从后端加载历史数据:', response);
+                    // 同步到localStorage
+                    saveHistoryForMonth(month, response.history);
+                    // 重新渲染
+                    renderHistoryTable(month);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.log('后端没有该月份的数据，使用本地数据');
+            }
+        });
+    }
+
     function loadPersonList() {
         $.ajax({
             url: '/FinalScheduler/queryPerson',
@@ -69,38 +117,394 @@ $(document).ready(function() {
     }
 
     $('#history_load_btn').click(function() {
-        renderHistoryTable($('#history_month').val());
+        var month = $('#history_month').val();
+        console.log('========== 加载历史排班 =========');
+        console.log('月份:', month);
+        
+        // 先尝试从后端加载
+        $.ajax({
+            url: '/FinalScheduler/api/loadHistory?month=' + month,
+            type: 'GET',
+            dataType: 'json',
+            success: function(response) {
+                if (response && response.history && response.history.assignments) {
+                    console.log('从后端加载到完整数据');
+                    console.log('后端数据中的天数:', Object.keys(response.history.assignments[Object.keys(response.history.assignments)[0]] || {}).length);
+                    
+                    // 同步到localStorage
+                    saveHistoryForMonth(month, response.history);
+                    
+                    // 重新渲染
+                    renderHistoryTable(month);
+                } else {
+                    console.log('后端没有数据，使用localStorage');
+                    renderHistoryTable(month);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.log('后端加载失败，使用localStorage:', error);
+                renderHistoryTable(month);
+            }
+        });
+    });
+
+    // 清空本月历史排班数据
+    $('#history_clear_btn').click(function() {
+        var month = $('#history_month').val();
+        
+        if (!confirm('确定要清空 ' + month + ' 的历史排班数据吗？\n\n此操作不可恢复！')) {
+            return;
+        }
+        
+        // 从localStorage删除
+        var all = getSavedHistory();
+        if (all[month]) {
+            delete all[month];
+            localStorage.setItem('schedule_history', JSON.stringify(all));
+            console.log('已从localStorage删除:', month);
+        }
+        
+        // 从后端删除
+        $.ajax({
+            url: '/FinalScheduler/api/deleteHistory?month=' + month,
+            type: 'DELETE',
+            success: function(response) {
+                console.log('已从后端删除:', month);
+                alert(month + ' 的历史排班数据已清空');
+                // 重新渲染为空表
+                renderHistoryTable(month);
+            },
+            error: function(xhr, status, error) {
+                console.error('后端删除失败:', error);
+                alert(month + ' 的本地数据已清空，但服务器删除失败');
+                renderHistoryTable(month);
+            }
+        });
     });
 
     $('#history_save_btn').click(function() {
         var month = $('#history_month').val();
         var history = collectHistoryTable(month);
         
-        // 清理历史数据：只保留有实际班次的天数（白班/夜班）
-        var cleanedHistory = { month: month, assignments: {} };
-        Object.keys(history.assignments).forEach(function(pid) {
-            cleanedHistory.assignments[pid] = {};
-            Object.keys(history.assignments[pid]).forEach(function(dayStr) {
-                var day = parseInt(dayStr);
-                var value = history.assignments[pid][dayStr];
-                // 只保存前9天且有实际班次的记录
-                if (day <= 9 && (value === '白班' || value === '夜班')) {
-                    cleanedHistory.assignments[pid][day] = value;
-                }
-            });
-            // 如果该员工没有任何有效数据，删除这个key
-            if (Object.keys(cleanedHistory.assignments[pid]).length === 0) {
-                delete cleanedHistory.assignments[pid];
-            }
-        });
+        // 保存全部月份的数据，不再限制为前9天
+        saveHistoryForMonth(month, history);
+        console.log('历史排班已保存：', history);
         
-        saveHistoryForMonth(month, cleanedHistory);
-        console.log('历史排班已保存并清理：', cleanedHistory);
-        alert('历史排班已保存（只保留前9天的班次数据）');
+        // 注意：不再同步到schedule_roster，避免与排班管理页面混淆
+        // 历史排班和排班管理是两个独立的流程
+        
+        alert('历史排班已保存（' + month + '全月数据）');
+        console.log('保存的数据统计：');
+        
+        // 统计保存的数据
+        var totalAssignments = 0;
+        var employeeCount = 0;
+        Object.keys(history.assignments).forEach(function(pid) {
+            employeeCount++;
+            totalAssignments += Object.keys(history.assignments[pid]).length;
+        });
+        console.log('- 员工数：' + employeeCount);
+        console.log('- 班次记录数：' + totalAssignments);
+        
+        // 保存到后端文件
+        saveHistoryToBackend(month, history);
     });
 
     $('#history_month').change(function() {
         renderHistoryTable($('#history_month').val());
+    });
+
+    // Excel导入功能
+    $('#history_import_btn').click(function() {
+        $('#history_import_file').click();
+    });
+
+    $('#history_import_file').change(function(e) {
+        var file = e.target.files[0];
+        if (!file) {
+            return;
+        }
+
+        var month = $('#history_month').val();
+        if (!month) {
+            alert('请先选择月份！');
+            return;
+        }
+
+        console.log('========== 开始导入Excel文件 ==========');
+        console.log('文件名:', file.name);
+        console.log('月份:', month);
+
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                console.log('1. 文件读取成功，大小:', e.target.result.byteLength, 'bytes');
+                
+                var data = new Uint8Array(e.target.result);
+                var workbook = XLSX.read(data, { type: 'array' });
+                
+                console.log('2. Excel解析成功');
+                console.log('工作表数量:', workbook.SheetNames.length);
+                console.log('工作表名称:', workbook.SheetNames);
+                
+                // 获取第一个工作表
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+                
+                // 转换为JSON数据（使用defval处理空单元格）
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+                
+                console.log('3. 转换为JSON成功');
+                console.log('总行数:', jsonData.length);
+                console.log('表头数据:', jsonData[0]);
+                if (jsonData.length > 1) {
+                    console.log('第一行数据:', jsonData[1]);
+                }
+                
+                if (!jsonData || jsonData.length < 2) {
+                    alert('Excel文件数据格式不正确！至少需要表头和一行数据。');
+                    return;
+                }
+
+                // 解析Excel数据
+                var header = jsonData[0]; // 第一行是表头
+                var daysInMonth = header.length - 1; // 减去姓名列
+                
+                console.log('4. 解析表头');
+                console.log('表头列数:', header.length);
+                console.log('天数:', daysInMonth);
+
+                // 获取人员列表以匹配姓名和PID
+                if (!personList || personList.length === 0) {
+                    alert('请先加载人员列表！');
+                    return;
+                }
+
+                console.log('5. 人员列表:', personList);
+
+                // 创建姓名到PID的映射
+                var nameToPidMap = {};
+                personList.forEach(function(person) {
+                    nameToPidMap[person.name] = person.pid;
+                    // 也添加trim后的名称映射
+                    nameToPidMap[person.name.trim()] = person.pid;
+                });
+
+                console.log('6. 姓名到PID映射:', nameToPidMap);
+
+                // 辅助函数：模糊匹配员工姓名
+                function findPersonByName(name) {
+                    // 1. 精确匹配
+                    if (nameToPidMap[name]) {
+                        return nameToPidMap[name];
+                    }
+                    
+                    // 2. 去除空格后匹配
+                    var trimmedName = name.replace(/\s+/g, '');
+                    for (var key in nameToPidMap) {
+                        if (key.replace(/\s+/g, '') === trimmedName) {
+                            console.log('    -> 模糊匹配成功: "' + name + '" -> "' + key + '"');
+                            return nameToPidMap[key];
+                        }
+                    }
+                    
+                    // 3. 部分匹配（包含关系）
+                    for (var key in nameToPidMap) {
+                        if (key.indexOf(trimmedName) !== -1 || trimmedName.indexOf(key) !== -1) {
+                            console.log('    -> 部分匹配成功: "' + name + '" -> "' + key + '"');
+                            return nameToPidMap[key];
+                        }
+                    }
+                    
+                    return null;
+                }
+
+                // 构建历史数据
+                var history = { month: month, assignments: {} };
+                var importedCount = 0;
+                var restCount = 0;
+                var skippedNames = [];
+                var debugDetails = [];
+
+                // 班次名称映射表
+                var shiftMapping = {
+                    '白班': '白班',
+                    '夜班': '夜班',
+                    '休息': '休息',
+                    '休': '休息',
+                    // 充网告警班次映射
+                    '充网告警白1': '白班',
+                    '充网告警白2': '白班',
+                    '充网告警夜1': '夜班',
+                    '充网告警夜2': '夜班',
+                    // 支持部分匹配
+                    '告警白1': '白班',
+                    '告警白2': '白班',
+                    '告警夜1': '夜班',
+                    '告警夜2': '夜班'
+                };
+
+                // 辅助函数：转换班次名称
+                function normalizeShift(value) {
+                    // 1. 精确匹配
+                    if (shiftMapping[value]) {
+                        return shiftMapping[value];
+                    }
+                    
+                    // 2. 模糊匹配（包含关键词）
+                    var lowerValue = value.toLowerCase();
+                    if (lowerValue.indexOf('白') !== -1) {
+                        return '白班';
+                    }
+                    if (lowerValue.indexOf('夜') !== -1 || lowerValue.indexOf('晚') !== -1) {
+                        return '夜班';
+                    }
+                    if (lowerValue.indexOf('休') !== -1 || lowerValue.indexOf('off') !== -1) {
+                        return '休息';
+                    }
+                    
+                    return null;
+                }
+
+                // 从第二行开始处理每个员工的数据
+                for (var i = 1; i < jsonData.length; i++) {
+                    var row = jsonData[i];
+                    console.log('处理第' + (i + 1) + '行:', row);
+                    
+                    if (!row || row.length === 0) {
+                        console.log('  -> 跳过空行');
+                        continue;
+                    }
+
+                    var name = row[0]; // 第一列是姓名
+                    if (!name || name === '') {
+                        console.log('  -> 跳过无姓名行');
+                        continue;
+                    }
+                    
+                    // 清理姓名（去除空格）
+                    name = String(name).trim();
+                    console.log('  -> 员工姓名: "' + name + '"');
+                    
+                    // 使用智能匹配查找PID
+                    var pid = findPersonByName(name);
+
+                    if (!pid) {
+                        console.warn('  -> 未找到员工 "' + name + '" 的PID，跳过');
+                        skippedNames.push(name);
+                        debugDetails.push('员工"' + name + '"不在人员列表中');
+                        continue;
+                    }
+
+                    console.log('  -> 匹配到PID:', pid);
+
+                    history.assignments[pid] = {};
+                    var hasData = false;
+                    var rowHasWorkDay = false;
+
+                    // 从第二列开始处理每天的班次（第1列是索引0的姓名）
+                    for (var day = 1; day <= daysInMonth && day < row.length; day++) {
+                        var value = row[day];
+                        
+                        // 处理undefined/null/空字符串
+                        if (value === undefined || value === null || value === '') {
+                            continue;
+                        }
+                        
+                        // 转换为字符串并清理
+                        value = String(value).trim();
+                        
+                        console.log('    -> 第' + day + '天: "' + value + '"');
+                        
+                        // 使用班次映射函数转换
+                        var normalizedShift = normalizeShift(value);
+                        
+                        if (normalizedShift === '白班' || normalizedShift === '夜班') {
+                            history.assignments[pid][day] = normalizedShift;
+                            hasData = true;
+                            importedCount++;
+                            rowHasWorkDay = true;
+                            console.log('      -> 转换: "' + value + '" -> "' + normalizedShift + '" [保存成功]');
+                        } else if (normalizedShift === '休息') {
+                            restCount++;
+                            console.log('      -> 休息日，跳过');
+                        } else {
+                            console.log('      -> 未知班次: "' + value + '"，跳过');
+                            debugDetails.push('第' + (i + 1) + '行第' + day + '天: 未知班次"' + value + '"');
+                        }
+                    }
+
+                    if (!rowHasWorkDay) {
+                        debugDetails.push('员工"' + name + '"没有白班/夜班数据');
+                    }
+
+                    // 如果该员工没有有效数据，删除这个key
+                    if (!hasData) {
+                        console.log('  -> 该员工没有白班或夜班数据，跳过');
+                        delete history.assignments[pid];
+                    }
+                }
+
+                console.log('7. 导入统计:');
+                console.log('  -> 白班/夜班记录数:', importedCount);
+                console.log('  -> 休息日数量:', restCount);
+                console.log('  -> 跳过的员工:', skippedNames);
+                console.log('  -> 历史数据:', history);
+                console.log('  -> 详细信息:', debugDetails);
+
+                // 保存到localStorage
+                saveHistoryForMonth(month, history);
+                
+                // 重新渲染表格
+                renderHistoryTable(month);
+                
+                // 清空文件选择器
+                $('#history_import_file').val('');
+                
+                // 构建详细提示信息
+                var message = '';
+                if (importedCount === 0) {
+                    message = '导入完成，但未找到有效的白班/夜班数据。\n\n';
+                    message += '可能原因：\n';
+                    message += '1. Excel中的所有数据都是"休息"\n';
+                    message += '2. 员工姓名与系统中的人员列表不匹配\n';
+                    message += '3. Excel格式不正确\n\n';
+                    message += '已处理的休息日数量：' + restCount + '\n';
+                    if (skippedNames.length > 0) {
+                        message += '未匹配的员工：' + skippedNames.join(', ') + '\n';
+                    }
+                    if (debugDetails.length > 0 && debugDetails.length <= 10) {
+                        message += '\n详细信息：\n';
+                        message += debugDetails.join('\n');
+                    }
+                    message += '\n请查看Console日志获取更多信息。';
+                } else {
+                    message = '✅ 导入成功！\n\n';
+                    message += '📊 白班/夜班记录：' + importedCount + ' 条\n';
+                    message += '⏸️ 休息日：' + restCount + ' 天\n';
+                    if (skippedNames.length > 0) {
+                        message += '⚠️ 未匹配的员工：' + skippedNames.join(', ') + '\n';
+                    }
+                    message += '\n💡 已自动转换班次名称：\n';
+                    message += '   充网告警白1/2 → 白班\n';
+                    message += '   充网告警夜1/2 → 夜班';
+                }
+                
+                alert(message);
+                console.log('========== 导入完成 ==========');
+                
+            } catch (error) {
+                console.error('导入失败:', error);
+                alert('导入失败：' + error.message + '\n\n请查看Console日志获取详细错误信息。');
+            }
+        };
+
+        reader.onerror = function(error) {
+            console.error('文件读取失败:', error);
+            alert('文件读取失败！');
+        };
+
+        reader.readAsArrayBuffer(file);
     });
 
     $('#history_roster_body').on('click', '.history-cell', function() {
@@ -113,9 +517,17 @@ $(document).ready(function() {
 
     function renderHistoryTable(month) {
         if (!personList.length) {
+            console.log('人员列表为空，无法渲染历史排班表');
             return;
         }
-        var [year, monthStr] = month.split('-');
+        
+        console.log('========== 开始渲染历史排班表 ==========');
+        console.log('月份:', month);
+        
+        var parts = month.split('-');
+        var year = parts[0];
+        var monthStr = parts[1];
+        
         if (!year || !monthStr) {
             month = currentMonth;
             year = month.split('-')[0];
@@ -123,7 +535,19 @@ $(document).ready(function() {
             $('#history_month').val(month);
         }
         var daysInMonth = new Date(year, monthStr, 0).getDate();
+        
+        console.log('月份信息 - 年:', year, '月:', monthStr, '天数:', daysInMonth);
+        
         var history = getHistoryForMonth(month);
+        console.log('从localStorage读取的历史数据:', history);
+        console.log('localStorage中完整的schedule_history:', getSavedHistory());
+        
+        if (!history) {
+            console.warn('未找到该月份的历史排班数据，显示空表');
+        } else {
+            console.log('历史数据中的assignments:', history.assignments);
+        }
+        
         var headHtml = '<tr><th style="width:120px;">姓名</th>';
         for (var i = 1; i <= daysInMonth; i++) {
             headHtml += '<th style="min-width:60px; text-align:center;">' + i + '</th>';
@@ -145,6 +569,7 @@ $(document).ready(function() {
             bodyHtml += '</tr>';
         });
         $('#history_roster_body').html(bodyHtml);
+        console.log('历史排班表渲染完成');
     }
 
     function collectHistoryTable(month) {
@@ -172,9 +597,47 @@ $(document).ready(function() {
         return historyStatuses[index + 1];
     }
 
+    // 数据恢复工具：检查所有可能的存储位置
+    function checkAllStorage() {
+        console.log('========== 开始检查所有存储位置 ==========');
+        
+        var keys = [
+            'schedule_history',
+            'schedule_roster',
+            'schedule_demands',
+            'schedule_page_state',
+            'shift_balance_history'
+        ];
+        
+        keys.forEach(function(key) {
+            var data = localStorage.getItem(key);
+            if (data) {
+                console.log('\n【' + key + '】:');
+                try {
+                    var parsed = JSON.parse(data);
+                    console.log('数据内容:', parsed);
+                    console.log('包含的月份:', Object.keys(parsed));
+                } catch(e) {
+                    console.log('原始数据:', data.substring(0, 200) + '...');
+                }
+            } else {
+                console.log('\n【' + key + '】: 无数据');
+            }
+        });
+        
+        console.log('\n========== 检查完成 ==========');
+    }
+    
+    // 在页面加载时自动执行检查
+    console.log('提示：在Console中输入 checkAllStorage() 可以查看所有存储的数据');
+    window.checkAllStorage = checkAllStorage;
+
     loadPersonList();
 });
 </script>
+
+<!-- 引入 XLSX 库用于Excel导入（使用CDN） -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <style>
 #history_roster_table {
@@ -192,3 +655,4 @@ $(document).ready(function() {
     text-align: center;
 }
 </style>
+

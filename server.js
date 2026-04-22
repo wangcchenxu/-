@@ -3,7 +3,6 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
-const XLSX = require('xlsx');
 
 const app = express();
 const APP_ROOT = path.join(__dirname, 'WebRoot');
@@ -375,7 +374,7 @@ function replaceVariables(content, context) {
     return '';
   });
 
-  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#elseif\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#\/if>/g, (match, var1, val1, body1, var2, val2, body2) => {
+  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#elseif\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2) => {
     const checkVal1 = getValueFromContext(context, var1);
     if (String(checkVal1) === String(val1)) {
       return body1;
@@ -577,7 +576,7 @@ function replaceVariablesExtended(content, context) {
     return '';
   });
 
-  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#elseif\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#\/if>/g, (match, var1, val1, body1, var2, val2, body2) => {
+  result = result.replace(/<#if\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<#elseif\s+(\w+(?:\.\w+)*)\s*==\s*(\d+)>([\s\S]*?)<\/#if>/g, (match, var1, val1, body1, var2, val2, body2) => {
     const checkVal1 = getValueFromContext(context, var1);
     if (String(checkVal1) === String(val1)) {
       return body1;
@@ -659,41 +658,341 @@ function getRawOrder(req) {
 }
 
 // 导出班表接口 (POST - 接收前端数据)
-app.post('/FinalScheduler/export/schedule', (req, res) => {
+app.post('/FinalScheduler/export/schedule', async (req, res) => {
   try {
+    console.log('========== 导出班表接口被调用 ==========');
     const { month, data } = req.body;
     
+    console.log('月份:', month);
+    console.log('数据行数:', data ? data.length : 0);
+    
+    if (!month) {
+      return res.status(400).json({ error: '请选择月份' });
+    }
+    
     if (!data || !Array.isArray(data) || data.length === 0) {
-      return res.status(400).send('无效的班表数据');
+      return res.status(400).json({ error: '无效的班表数据' });
     }
 
-    // 1. 创建工作表
-    const ws = XLSX.utils.aoa_to_sheet(data);
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet(month + '班表');
+
+    // 1. 添加数据并设置样式
+    const daysInMonth = data[0].length - 1; // 减去姓名列
+    
+    data.forEach((row, rowIndex) => {
+      const excelRow = worksheet.addRow(row);
+      
+      row.forEach((cell, colIndex) => {
+        const cellObj = excelRow.getCell(colIndex + 1);
+        
+        // 设置对齐方式：居中
+        cellObj.alignment = { 
+          vertical: 'middle', 
+          horizontal: 'center',
+          wrapText: false
+        };
+        
+        // 设置边框
+        cellObj.border = {
+          top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+          right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+        };
+        
+        // 表头行样式（第一行）
+        if (rowIndex === 0) {
+          cellObj.font = { 
+            name: 'Microsoft YaHei',
+            size: 11,
+            bold: true,
+            color: { argb: 'FF000000' }
+          };
+          cellObj.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFF5F5F5' } // 浅灰色背景
+          };
+          cellObj.alignment = { 
+            vertical: 'middle', 
+            horizontal: 'center',
+            wrapText: false
+          };
+        }
+        // 数据行样式
+        else {
+          // 姓名列（第一列）样式
+          if (colIndex === 0) {
+            cellObj.font = { 
+              name: 'Microsoft YaHei',
+              size: 10,
+              bold: true,
+              color: { argb: 'FF333333' }
+            };
+            cellObj.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFF7F7F7' } // 浅灰色背景
+            };
+          }
+          // 数据列样式
+          else {
+            cellObj.font = { 
+              name: 'Microsoft YaHei',
+              size: 10,
+              bold: false,
+              color: { argb: 'FF333333' }
+            };
+            
+            // 根据班次设置背景色和文字颜色
+            if (cell === '白班') {
+              cellObj.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFF0AD4E' } // 橙色背景（与前端一致）
+              };
+              cellObj.font = { 
+                name: 'Microsoft YaHei',
+                size: 10,
+                bold: true,
+                color: { argb: 'FFFFFFFF' } // 白色文字
+              };
+            } else if (cell === '夜班') {
+              cellObj.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFD9534F' } // 红色背景（与前端一致）
+              };
+              cellObj.font = { 
+                name: 'Microsoft YaHei',
+                size: 10,
+                bold: true,
+                color: { argb: 'FFFFFFFF' } // 白色文字
+              };
+            } else {
+              // 休息
+              cellObj.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFD9EDF7' } // 浅蓝色背景（与前端一致）
+              };
+            }
+          }
+        }
+      });
+    });
 
     // 2. 设置列宽
-    const colWidths = [{ wch: 15 }];
-    for (let i = 1; i < data[0].length; i++) {
-      colWidths.push({ wch: 10 });
+    worksheet.getColumn(1).width = 15; // 姓名列
+    for (let i = 2; i <= daysInMonth + 1; i++) {
+      worksheet.getColumn(i).width = 8; // 日期列
     }
-    ws['!cols'] = colWidths;
 
-    // 3. 创建工作簿并附加工作表
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, month + '班表');
+    // 3. 设置行高
+    worksheet.getRow(1).height = 25; // 表头行高
+    for (let i = 2; i <= data.length; i++) {
+      worksheet.getRow(i).height = 20; // 数据行高
+    }
 
-    // 4. 生成 buffer
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    // 4. 冻结首行和首列
+    worksheet.views = [
+      { 
+        state: 'frozen', 
+        xSplit: 1, 
+        ySplit: 1,
+        topLeftCell: 'B2',
+        activeCell: 'B2'
+      }
+    ];
 
-    // 5. 设置响应头，触发浏览器下载
+    // 5. 生成 buffer
+    const buf = await workbook.xlsx.writeBuffer();
+
+    console.log('Excel文件生成成功，大小:', buf.length, 'bytes');
+
+    // 6. 设置响应头，触发浏览器下载
     const filename = `${month}_班表.xlsx`;
-    res.setHeader('Content-Disposition', `attachment; filename=${encodeURIComponent(filename)}`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Length', buf.length);
     
-    // 6. 发送文件
+    // 7. 发送文件
     res.send(buf);
+    console.log('文件已发送');
   } catch (error) {
     console.error('导出失败:', error);
-    res.status(500).send('导出班表失败: ' + error.message);
+    res.status(500).json({ error: '导出班表失败: ' + error.message });
+  }
+});
+
+// 历史排班数据保存路径
+const HISTORY_DIR = path.join(DATA_DIR, 'history');
+const HISTORY_FILE = path.join(HISTORY_DIR, 'schedule_history.json');
+
+// 确保历史数据目录存在
+async function ensureHistoryDir() {
+  await fs.mkdir(HISTORY_DIR, { recursive: true });
+  if (!fsSync.existsSync(HISTORY_FILE)) {
+    await fs.writeFile(HISTORY_FILE, JSON.stringify({}, null, 2), 'utf8');
+  }
+}
+
+// 保存历史排班数据
+app.post('/FinalScheduler/api/saveHistory', async (req, res) => {
+  try {
+    const { month, history } = req.body;
+    
+    if (!month || !history) {
+      return res.status(400).json({ error: '缺少必要参数' });
+    }
+
+    console.log('保存历史排班:', month);
+
+    // 确保目录存在
+    await ensureHistoryDir();
+
+    // 读取现有的历史数据
+    let allHistory = {};
+    try {
+      const rawData = await fs.readFile(HISTORY_FILE, 'utf8');
+      allHistory = JSON.parse(rawData);
+    } catch (err) {
+      console.log('历史文件不存在，将创建新文件');
+    }
+
+    // 更新该月份的数据
+    allHistory[month] = history;
+
+    // 保存回文件
+    await fs.writeFile(HISTORY_FILE, JSON.stringify(allHistory, null, 2), 'utf8');
+
+    console.log('历史排班保存成功:', month);
+    res.json({ 
+      success: true, 
+      message: '保存成功',
+      month: month 
+    });
+  } catch (error) {
+    console.error('保存历史排班失败:', error);
+    res.status(500).json({ error: '保存失败: ' + error.message });
+  }
+});
+
+// 加载历史排班数据
+app.get('/FinalScheduler/api/loadHistory', async (req, res) => {
+  try {
+    const { month } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({ error: '请提供月份参数' });
+    }
+
+    console.log('加载历史排班:', month);
+
+    // 确保目录存在
+    await ensureHistoryDir();
+
+    // 读取历史数据
+    let allHistory = {};
+    try {
+      const rawData = await fs.readFile(HISTORY_FILE, 'utf8');
+      allHistory = JSON.parse(rawData);
+    } catch (err) {
+      console.log('历史文件不存在');
+      return res.json({ history: null });
+    }
+
+    const history = allHistory[month] || null;
+    console.log('历史排班加载成功:', month, history ? '有数据' : '无数据');
+    
+    res.json({ 
+      success: true,
+      month: month,
+      history: history 
+    });
+  } catch (error) {
+    console.error('加载历史排班失败:', error);
+    res.status(500).json({ error: '加载失败: ' + error.message });
+  }
+});
+
+// 加载所有历史排班数据
+app.get('/FinalScheduler/api/loadAllHistory', async (req, res) => {
+  try {
+    console.log('加载所有历史排班数据');
+
+    // 确保目录存在
+    await ensureHistoryDir();
+
+    // 读取历史数据
+    let allHistory = {};
+    try {
+      const rawData = await fs.readFile(HISTORY_FILE, 'utf8');
+      allHistory = JSON.parse(rawData);
+    } catch (err) {
+      console.log('历史文件不存在');
+      return res.json({ history: {} });
+    }
+
+    console.log('所有历史排班加载成功，共', Object.keys(allHistory).length, '个月份');
+    
+    res.json({ 
+      success: true,
+      history: allHistory 
+    });
+  } catch (error) {
+    console.error('加载所有历史排班失败:', error);
+    res.status(500).json({ error: '加载失败: ' + error.message });
+  }
+});
+
+// 删除指定月份的历史排班数据
+app.delete('/FinalScheduler/api/deleteHistory', async (req, res) => {
+  try {
+    const { month } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({ error: '请提供月份参数' });
+    }
+
+    console.log('删除历史排班:', month);
+
+    // 确保目录存在
+    await ensureHistoryDir();
+
+    // 读取历史数据
+    let allHistory = {};
+    try {
+      const rawData = await fs.readFile(HISTORY_FILE, 'utf8');
+      allHistory = JSON.parse(rawData);
+    } catch (err) {
+      console.log('历史文件不存在');
+      return res.json({ success: true, message: '数据不存在' });
+    }
+
+    // 删除指定月份
+    if (allHistory[month]) {
+      delete allHistory[month];
+      await fs.writeFile(HISTORY_FILE, JSON.stringify(allHistory, null, 2), 'utf8');
+      console.log('历史排班删除成功:', month);
+      res.json({ 
+        success: true, 
+        message: '删除成功',
+        month: month 
+      });
+    } else {
+      console.log('该月份数据不存在:', month);
+      res.json({ 
+        success: true, 
+        message: '数据不存在',
+        month: month 
+      });
+    }
+  } catch (error) {
+    console.error('删除历史排班失败:', error);
+    res.status(500).json({ error: '删除失败: ' + error.message });
   }
 });
 
