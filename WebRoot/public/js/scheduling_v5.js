@@ -213,18 +213,9 @@ function canWorkToday(emp, day, shiftType) {
     var daysLeft = emp.daysInMonth - day + 1;
     var totalRemaining = (quota.whiteDays - emp.whiteDaysAssigned) + (quota.nightDays - emp.nightDaysAssigned);
     
-    // 硬约束1：连续工作不能超过5天（绝对禁止）
-    // 但月末紧急情况下可以例外：如果剩余天数 < 剩余配额，说明必须上班
-    if (emp.consecutiveWorkDays >= 5) {
-        // 月末紧急模式：如果不上班就无法完成配额，允许突破5天限制
-        if (daysLeft < totalRemaining) {
-            // 允许继续上班，但只限制最多6天
-            if (emp.consecutiveWorkDays >= 6) {
-                return false;
-            }
-        } else {
-            return false; // 非紧急情况，严格执行5天限制
-        }
+    // 硬约束1：连续工作不能超过6天（绝对禁止，月末紧急情况下允许到6天）
+    if (emp.consecutiveWorkDays >= 6) {
+        return false;
     }
     
     // 硬约束2：月内只允许切换一次班次（绝对禁止）
@@ -240,10 +231,10 @@ function canWorkToday(emp, day, shiftType) {
         return false;
     }
     
-    // 注意：以下约束已软化，交给评分函数处理
-    // - 连续工作1天的惩罚（通过负分实现）
-    // - 休息1天上班的惩罚（通过负分实现）
-    // 这样可以确保每天至少有足够的候选人
+    // 注意：以下约束已交给评分函数处理
+    // - 连续性约束（通过高额正负分实现）
+    // - 休息天数约束（通过高额正负分实现）
+    // 这样可以确保算法有足够灵活性，同时通过评分引导合理模式
     
     return true;
 }
@@ -551,51 +542,53 @@ function calculateAssignmentScore(emp, day, shiftType) {
     var quota = schedulingQuotas[emp.pid];
     var daysLeft = emp.daysInMonth - day + 1;
     
-    // ===== 第一优先级：配额紧迫度（最重要） =====
+    // ===== 第零优先级：月末紧急模式（唯一保留的进度控制） =====
+    var totalRemaining = (quota.whiteDays - emp.whiteDaysAssigned) + (quota.nightDays - emp.nightDaysAssigned);
+    
+    // 只有在月末紧急情况下才启用进度控制
+    // 判断标准：剩余天数 < 剩余配额，说明必须上班
+    if (daysLeft <= totalRemaining && daysLeft <= 10) {
+        score += 8000; // 极高优先级，确保月末配额完成
+    }
+    
+    // ===== 第一优先级：配额紧迫度（温和调节） =====
     var whiteRemaining = quota.whiteDays - emp.whiteDaysAssigned;
     var nightRemaining = quota.nightDays - emp.nightDaysAssigned;
-    var totalRemaining = whiteRemaining + nightRemaining;
     
     if (totalRemaining > 0 && daysLeft > 0) {
         var urgency = totalRemaining / daysLeft;
-        // 配额越紧迫，分数越高
-        score += urgency * 2000;
+        score += urgency * 1000; // 降低权重，避免过于激进
         
-        // 如果某个班次特别紧迫，额外加分
         if (shiftType === 'white' && whiteRemaining > 0) {
-            score += (whiteRemaining / daysLeft) * 1000;
+            score += (whiteRemaining / daysLeft) * 500;
         }
         if (shiftType === 'night' && nightRemaining > 0) {
-            score += (nightRemaining / daysLeft) * 1000;
-        }
-        
-        // 关键修复：月末紧急分配
-        // 如果剩余天数少于剩余配额，必须立即上班，否则无法完成配额
-        if (daysLeft <= totalRemaining && daysLeft <= 5) {
-            score += 10000; // 极高优先级，确保月末配额完成
+            score += (nightRemaining / daysLeft) * 500;
         }
     }
     
-    // ===== 第二优先级：连续性约束（软化，避免候选人不足） =====
+    // ===== 第二优先级：连续性约束（最重要） =====
     if (emp.consecutiveWorkDays === 0) {
         // 刚开始新工作块
         if (emp.consecutiveRestDays >= 3 && emp.consecutiveRestDays <= 4) {
-            score += 500; // 休息3-4天后开始工作，最优
+            score += 2000; // 休息3-4天后开始工作，强烈鼓励
         } else if (emp.consecutiveRestDays >= 2) {
-            score += 200; // 休息2天，可以开始
+            score += 1000; // 休息2天，鼓励
         } else if (emp.consecutiveRestDays === 1) {
-            score -= 2000; // 只休息1天，不鼓励但允许（软化约束）
+            score -= 5000; // 只休息1天，强烈不鼓励
+        } else if (emp.consecutiveRestDays === 0) {
+            score -= 8000; // 刚下班就上班，极不鼓励
         }
     } else {
         // 连续工作中
         if (emp.consecutiveWorkDays === 2 || emp.consecutiveWorkDays === 3) {
-            score += 400; // 连续2-3天，最优
-        } else if (emp.consecutiveWorkDays === 1) {
-            score -= 1500; // 只工作1天，不鼓励但允许（软化约束）
+            score += 1500; // 连续2-3天，最优，强烈鼓励
         } else if (emp.consecutiveWorkDays === 4) {
-            score += 100; // 连续4天，可接受
+            score += 500; // 连续4天，可接受
+        } else if (emp.consecutiveWorkDays === 1) {
+            score -= 3000; // 只工作1天，不鼓励
         } else if (emp.consecutiveWorkDays >= 5) {
-            score -= 5000; // 连续5天以上，较强惩罚
+            score -= 8000; // 连续5天以上，强烈惩罚
         }
     }
     
@@ -630,7 +623,6 @@ function calculateAssignmentScore(emp, day, shiftType) {
     // ===== 第四优先级：均衡性微调（错开切换时间） =====
     if (!emp.hasSwitchedShift && day > midPoint - 5 && day < midPoint + 5) {
         // 在中点附近，根据员工索引错开切换时间
-        // 修复：安全地将pid转换为字符串再提取数字
         var pidStr = String(emp.pid);
         var empIndex = parseInt(pidStr.replace(/\D/g, '')) || 0;
         var idealSwitchDay = midPoint + (empIndex % 6) - 3;
