@@ -73,115 +73,405 @@ function calculateMonthlyQuotas(persons, demands, daysInMonth, month) {
     return quotaResult;
 }
 
+/**
+ * 第二层：逐日排班 - 全局协调版
+ * 核心策略：每天从可用人员池中选择最合适的人，确保每日2白2夜
+ */
 function performDailyScheduling(persons, demands, daysInMonth, month, quotaData, personRestDays) {
-    console.log('\n========== 第二层：逐日排班（v5.0） ==========');
+    console.log('\n========== 第二层：逐日排班（全局协调版） ==========');
+    
+    // 更新全局quotas变量
     schedulingQuotas = quotaData;
+    
+    // 初始化员工状态
     var employees = persons.map(function(p) {
         return {
-            pid: p.pid, name: p.name, assignments: {},
-            whiteDaysAssigned: 0, nightDaysAssigned: 0, totalDaysAssigned: 0, restDaysAssigned: 0,
-            consecutiveWorkDays: 0, consecutiveRestDays: 0,
-            lastShiftType: null, hasSwitchedShift: false, daysInMonth: daysInMonth
+            pid: p.pid,
+            name: p.name,
+            assignments: {},
+            whiteDaysAssigned: 0,
+            nightDaysAssigned: 0,
+            totalDaysAssigned: 0,
+            restDaysAssigned: 0,
+            consecutiveWorkDays: 0,
+            consecutiveRestDays: 0,
+            lastShiftType: null,
+            hasSwitchedShift: false,
+            daysInMonth: daysInMonth,
+            // 块模式跟踪
+            workBlock1Remaining: Math.floor(quotaData[p.pid].totalWorkDays / 2),
+            restBetweenBlocks: Math.max(3, Math.min(4, Math.floor((daysInMonth - quotaData[p.pid].totalWorkDays) / 2))),
+            workBlock2Remaining: quotaData[p.pid].totalWorkDays - Math.floor(quotaData[p.pid].totalWorkDays / 2),
+            currentPhase: 1, // 1=工作块1, 2=休息, 3=工作块2
+            block1ShiftType: null // 记录工作块1的班次类型
         };
     });
-    var dailyCount = {};
-    for (var d = 1; d <= daysInMonth; d++) dailyCount[d] = {white: 0, night: 0, rest: 0};
     
+    // 初始化每日统计
+    var dailyCount = {};
+    for (var d = 1; d <= daysInMonth; d++) {
+        dailyCount[d] = {white: 0, night: 0, rest: 0};
+    }
+    
+    // 步骤1: 标记强制休息日
+    console.log('[步骤1] 标记强制休息日...');
     employees.forEach(function(emp) {
-        (personRestDays[emp.pid] || []).forEach(function(day) {
+        var restDays = personRestDays[emp.pid] || [];
+        restDays.forEach(function(day) {
             if (day >= 1 && day <= daysInMonth) {
-                emp.assignments[day] = 'rest';
-                emp.restDaysAssigned++;
-                emp.consecutiveRestDays++;
+                emp.assignments[day] = 'forced_rest';
                 dailyCount[day].rest++;
             }
         });
     });
     
+    // 步骤2: 加载上月末状态
+    console.log('[步骤2] 加载上月末状态...');
     employees.forEach(function(emp) {
         var prevState = getPreviousMonthState(month, emp.pid);
         if (prevState.lastShift) {
             emp.lastShiftType = prevState.lastShift;
             emp.consecutiveWorkDays = prevState.consecutive || 0;
+            emp.block1ShiftType = prevState.lastShift;
+            console.log('  ' + emp.name + ': 上月末连续' + emp.lastShiftType + '班' + emp.consecutiveWorkDays + '天');
         } else {
             emp.consecutiveRestDays = prevState.consecutive || 0;
+            console.log('  ' + emp.name + ': 上月末连续休息' + emp.consecutiveRestDays + '天');
         }
     });
     
+    // 步骤3: 逐日分配 - 全局协调
+    console.log('[步骤3] 逐日全局协调分配...');
     for (var day = 1; day <= daysInMonth; day++) {
-        var availableForWhite = [], availableForNight = [];
-        employees.forEach(function(emp) {
-            if (emp.assignments[day]) return;
-            var quota = schedulingQuotas[emp.pid];
-            if (!quota) return;
-            if (emp.whiteDaysAssigned < quota.whiteDays) availableForWhite.push(emp);
-            if (emp.nightDaysAssigned < quota.nightDays) availableForNight.push(emp);
+        console.log('\n--- 第' + day + '天 ---');
+        
+        // 跳过强制休息日
+        var alreadyAssigned = employees.filter(function(emp) {
+            return emp.assignments[day] === 'forced_rest';
         });
         
-        var scoredWhite = availableForWhite.map(function(emp) { return { emp: emp, score: calculateAssignmentScore(emp, day, 'white') }; });
-        scoredWhite.sort(function(a, b) { return b.score - a.score; });
-        var assignedWhite = 0;
-        for (var i = 0; i < scoredWhite.length && assignedWhite < 2; i++) {
-            var emp = scoredWhite[i].emp;
-            if (emp.whiteDaysAssigned >= schedulingQuotas[emp.pid].whiteDays) continue;
-            emp.assignments[day] = 'white';
-            emp.whiteDaysAssigned++; emp.totalDaysAssigned++; emp.consecutiveWorkDays++; emp.consecutiveRestDays = 0;
-            if (emp.lastShiftType && emp.lastShiftType !== 'white') emp.hasSwitchedShift = true;
-            emp.lastShiftType = 'white';
-            dailyCount[day].white++; assignedWhite++;
-        }
+        // 收集可以上班的候选人
+        var candidatesForWhite = [];
+        var candidatesForNight = [];
         
-        var scoredNight = availableForNight.map(function(emp) { return { emp: emp, score: calculateAssignmentScore(emp, day, 'night') }; });
-        scoredNight.sort(function(a, b) { return b.score - a.score; });
-        var assignedNight = 0;
-        for (var i = 0; i < scoredNight.length && assignedNight < 2; i++) {
-            var emp = scoredNight[i].emp;
-            if (emp.nightDaysAssigned >= schedulingQuotas[emp.pid].nightDays) continue;
-            emp.assignments[day] = 'night';
-            emp.nightDaysAssigned++; emp.totalDaysAssigned++; emp.consecutiveWorkDays++; emp.consecutiveRestDays = 0;
-            if (emp.lastShiftType && emp.lastShiftType !== 'night') emp.hasSwitchedShift = true;
-            emp.lastShiftType = 'night';
-            dailyCount[day].night++; assignedNight++;
-        }
+        employees.forEach(function(emp) {
+            if (emp.assignments[day]) return; // 已经安排了
+            
+            var quota = schedulingQuotas[emp.pid];
+            
+            // 检查是否可以上白班
+            if (emp.whiteDaysAssigned < quota.whiteDays && canWorkToday(emp, day, 'white')) {
+                candidatesForWhite.push(emp);
+            }
+            
+            // 检查是否可以上夜班
+            if (emp.nightDaysAssigned < quota.nightDays && canWorkToday(emp, day, 'night')) {
+                candidatesForNight.push(emp);
+            }
+        });
         
+        console.log('  候选白班: ' + candidatesForWhite.length + '人, 候选夜班: ' + candidatesForNight.length + '人');
+        
+        // 选择2人上白班
+        selectBestCandidates(day, candidatesForWhite, employees, 'white', 2, dailyCount);
+        
+        // 选择2人上夜班（排除已选白班的）
+        var remainingForNight = candidatesForNight.filter(function(emp) {
+            return !emp.assignments[day];
+        });
+        selectBestCandidates(day, remainingForNight, employees, 'night', 2, dailyCount);
+        
+        // 其余人标记为休息
         employees.forEach(function(emp) {
             if (!emp.assignments[day]) {
                 emp.assignments[day] = 'rest';
-                emp.restDaysAssigned++; emp.consecutiveRestDays++; emp.consecutiveWorkDays = 0; emp.lastShiftType = null;
+                emp.restDaysAssigned++;
+                emp.consecutiveRestDays++;
+                emp.consecutiveWorkDays = 0;
                 dailyCount[day].rest++;
             }
         });
+        
+        console.log('  第' + day + '天结果: 白班' + dailyCount[day].white + '人, 夜班' + dailyCount[day].night + '人, 休息' + dailyCount[day].rest + '人');
+        
+        // 验证每日配置
+        if (dailyCount[day].white !== 2 || dailyCount[day].night !== 2) {
+            console.warn('  ⚠ 第' + day + '天不满足2白2夜！');
+        }
     }
     
-    console.log('========== 第二层完成 ==========\n');
+    console.log('\n========== 第二层完成 ==========\n');
     return employees;
 }
 
-function calculateAssignmentScore(emp, day, shiftType) {
-    var score = 0;
+/**
+ * 判断员工今天是否可以上某个班次
+ * 注意：这里只检查绝对硬约束，软约束交给评分函数处理
+ */
+function canWorkToday(emp, day, shiftType) {
     var quota = schedulingQuotas[emp.pid];
-    if (emp.consecutiveWorkDays >= 5) return -99999;
-    if (emp.hasSwitchedShift && emp.lastShiftType !== shiftType) return -99999;
-    if (emp.consecutiveWorkDays === 0) {
-        if (emp.consecutiveRestDays >= 2 && emp.consecutiveRestDays <= 4) score += 3000;
-        else if (emp.consecutiveRestDays >= 2) score += 1500;
-        else if (emp.consecutiveRestDays === 1) score -= 3000;
+    
+    // 硬约束1：连续工作不能超过5天（绝对禁止）
+    if (emp.consecutiveWorkDays >= 5) {
+        return false;
+    }
+    
+    // 硬约束2：月内只允许切换一次班次（绝对禁止）
+    if (emp.hasSwitchedShift && emp.lastShiftType !== shiftType) {
+        return false;
+    }
+    
+    // 硬约束3：配额检查（绝对禁止）
+    if (shiftType === 'white' && emp.whiteDaysAssigned >= quota.whiteDays) {
+        return false;
+    }
+    if (shiftType === 'night' && emp.nightDaysAssigned >= quota.nightDays) {
+        return false;
+    }
+    
+    // 注意：以下约束已软化，交给评分函数处理
+    // - 连续工作1天的惩罚（通过负分实现）
+    // - 休息1天上班的惩罚（通过负分实现）
+    // 这样可以确保每天至少有足够的候选人
+    
+    return true;
+}
+
+/**
+ * 从候选人中选择最优的几个
+ */
+function selectBestCandidates(day, candidates, allEmployees, shiftType, needed, dailyCount) {
+    if (candidates.length === 0 || needed === 0) return;
+    
+    // 评分
+    var scored = candidates.map(function(emp) {
+        return {
+            emp: emp,
+            score: calculateAssignmentScore(emp, day, shiftType)
+        };
+    });
+    
+    // 排序
+    scored.sort(function(a, b) { return b.score - a.score; });
+    
+    // 选择前needed个
+    var assigned = 0;
+    for (var i = 0; i < scored.length && assigned < needed; i++) {
+        var emp = scored[i].emp;
+        var quota = schedulingQuotas[emp.pid];
+        
+        // 最终检查
+        if (shiftType === 'white' && emp.whiteDaysAssigned >= quota.whiteDays) continue;
+        if (shiftType === 'night' && emp.nightDaysAssigned >= quota.nightDays) continue;
+        
+        // 分配
+        emp.assignments[day] = shiftType;
+        if (shiftType === 'white') {
+            emp.whiteDaysAssigned++;
+        } else {
+            emp.nightDaysAssigned++;
+        }
+        emp.totalDaysAssigned++;
+        emp.consecutiveWorkDays++;
+        emp.consecutiveRestDays = 0;
+        
+        // 记录工作块1的班次类型
+        if (!emp.block1ShiftType) {
+            emp.block1ShiftType = shiftType;
+        }
+        
+        // 检查班次切换
+        if (emp.lastShiftType && emp.lastShiftType !== shiftType) {
+            emp.hasSwitchedShift = true;
+        }
+        emp.lastShiftType = shiftType;
+        
+        dailyCount[day][shiftType]++;
+        assigned++;
+        
+        console.log('    ' + emp.name + ' -> ' + shiftType + '班 (分数:' + scored[i].score + ')');
+    }
+}
+
+/**
+ * 决定工作块1的班次类型
+ */
+function determineFirstBlockShift(emp, day) {
+    var quota = schedulingQuotas[emp.pid];
+    
+    // 如果有上月末的班次，优先延续
+    if (emp.lastShiftType) {
+        if (emp.lastShiftType === 'white' && emp.whiteDaysAssigned < quota.whiteDays) {
+            return 'white';
+        } else if (emp.lastShiftType === 'night' && emp.nightDaysAssigned < quota.nightDays) {
+            return 'night';
+        }
+    }
+    
+    // 根据配额决定：哪个班次剩余多就用哪个
+    var whiteRemaining = quota.whiteDays - emp.whiteDaysAssigned;
+    var nightRemaining = quota.nightDays - emp.nightDaysAssigned;
+    
+    if (whiteRemaining > nightRemaining) {
+        return 'white';
+    } else if (nightRemaining > whiteRemaining) {
+        return 'night';
     } else {
-        if (emp.consecutiveWorkDays === 2 || emp.consecutiveWorkDays === 3) score += 2000;
-        else if (emp.consecutiveWorkDays === 1) score -= 2000;
-        else if (emp.consecutiveWorkDays === 4) score += 500;
-        else if (emp.consecutiveWorkDays === 5) score -= 5000;
+        // 相等时，前半月上白班，后半月上夜班
+        var midPoint = Math.floor(emp.daysInMonth / 2);
+        return day <= midPoint ? 'white' : 'night';
     }
-    var totalRemaining = (quota.whiteDays - emp.whiteDaysAssigned) + (quota.nightDays - emp.nightDaysAssigned);
-    var daysLeft = emp.daysInMonth - day + 1;
-    if (totalRemaining > 0 && daysLeft > 0 && totalRemaining / daysLeft > 0.5) score += 1000;
-    var midPoint = Math.floor(emp.daysInMonth / 2);
-    if (day <= midPoint && !emp.hasSwitchedShift) {
-        if (emp.lastShiftType === shiftType) score += 500;
-    } else if (day > midPoint && !emp.hasSwitchedShift) {
-        if (emp.lastShiftType && emp.lastShiftType !== shiftType) score += 800;
+}
+
+/**
+ * 生成块序列：每人2个工作块 + 中间休息
+ */
+function generateBlockSequence(emp, quota, daysInMonth, month) {
+    var blocks = [];
+    var totalWork = quota.totalWorkDays;
+    
+    // 第一个工作块
+    var work1Days = Math.floor(totalWork / 2);
+    if (work1Days > 0) {
+        blocks.push({
+            type: 'work',
+            days: work1Days,
+            currentDay: 0,
+            shiftType: null
+        });
     }
-    return score;
+    
+    // 休息块
+    var restDays = Math.max(3, Math.min(4, Math.floor((daysInMonth - totalWork) / 2)));
+    blocks.push({
+        type: 'rest',
+        days: restDays,
+        currentDay: 0
+    });
+    
+    // 第二个工作块
+    var work2Days = totalWork - work1Days;
+    if (work2Days > 0) {
+        blocks.push({
+            type: 'work',
+            days: work2Days,
+            currentDay: 0,
+            shiftType: null
+        });
+    }
+    
+    return blocks;
+}
+
+/**
+ * 决定工作块的班次类型
+ */
+function determineShiftForBlock(emp, block, day) {
+    var quota = schedulingQuotas[emp.pid];
+    
+    // 如果是第一个工作块，优先使用上月末的班次
+    if (emp.currentBlockIndex === 0 && emp.lastShiftType) {
+        if (emp.lastShiftType === 'white' && emp.whiteDaysAssigned < quota.whiteDays) {
+            return 'white';
+        } else if (emp.lastShiftType === 'night' && emp.nightDaysAssigned < quota.nightDays) {
+            return 'night';
+        }
+    }
+    
+    // 如果已经切换过班次，只能使用另一个班次
+    if (emp.hasSwitchedShift) {
+        return emp.lastShiftType === 'white' ? 'night' : 'white';
+    }
+    
+    // 根据配额决定：哪个班次剩余天数多就用哪个
+    var whiteRemaining = quota.whiteDays - emp.whiteDaysAssigned;
+    var nightRemaining = quota.nightDays - emp.nightDaysAssigned;
+    
+    if (whiteRemaining > nightRemaining) {
+        return 'white';
+    } else if (nightRemaining > whiteRemaining) {
+        return 'night';
+    } else {
+        // 相等时，优先使用与上月末不同的班次（促进切换）
+        if (emp.lastShiftType && emp.lastShiftType !== 'white') {
+            return 'white';
+        } else {
+            return 'night';
+        }
+    }
+}
+
+/**
+ * 全局调整：确保每日2白2夜
+ */
+function adjustDailyConfiguration(employees, dailyCount, daysInMonth) {
+    console.log('开始全局调整...');
+    var maxIterations = 100;
+    var iteration = 0;
+    
+    while (iteration < maxIterations) {
+        var hasChanges = false;
+        
+        for (var day = 1; day <= daysInMonth; day++) {
+            var whiteCount = dailyCount[day].white;
+            var nightCount = dailyCount[day].night;
+            
+            if (whiteCount === 2 && nightCount === 2) continue;
+            
+            // 找出当天上班和休息的员工
+            var whiteWorkers = [];
+            var nightWorkers = [];
+            var restWorkers = [];
+            
+            employees.forEach(function(emp) {
+                if (emp.assignments[day] === 'white') whiteWorkers.push(emp);
+                else if (emp.assignments[day] === 'night') nightWorkers.push(emp);
+                else if (emp.assignments[day] === 'rest') restWorkers.push(emp);
+            });
+            
+            // 白班多了，夜班少了
+            if (whiteCount > 2 && nightCount < 2 && nightWorkers.length < 2) {
+                for (var i = 0; i < whiteWorkers.length && nightCount < 2; i++) {
+                    var emp = whiteWorkers[i];
+                    var quota = schedulingQuotas[emp.pid];
+                    if (emp.nightDaysAssigned < quota.nightDays) {
+                        emp.assignments[day] = 'night';
+                        emp.whiteDaysAssigned--;
+                        emp.nightDaysAssigned++;
+                        dailyCount[day].white--;
+                        dailyCount[day].night++;
+                        emp.lastShiftType = 'night';
+                        hasChanges = true;
+                        console.log('  第' + day + '天: ' + emp.name + ' 白班->夜班');
+                        break;
+                    }
+                }
+            } 
+            // 夜班多了，白班少了
+            else if (nightCount > 2 && whiteCount < 2 && whiteWorkers.length < 2) {
+                for (var i = 0; i < nightWorkers.length && whiteCount < 2; i++) {
+                    var emp = nightWorkers[i];
+                    var quota = schedulingQuotas[emp.pid];
+                    if (emp.whiteDaysAssigned < quota.whiteDays) {
+                        emp.assignments[day] = 'white';
+                        emp.nightDaysAssigned--;
+                        emp.whiteDaysAssigned++;
+                        dailyCount[day].night--;
+                        dailyCount[day].white++;
+                        emp.lastShiftType = 'white';
+                        hasChanges = true;
+                        console.log('  第' + day + '天: ' + emp.name + ' 夜班->白班');
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (!hasChanges) break;
+        iteration++;
+    }
+    
+    console.log('全局调整完成，迭代' + iteration + '次');
 }
 
 function getPreviousMonthState(currentMonth, pid) {
@@ -243,6 +533,97 @@ function validateRoster(roster, rules) {
         console.log('✓ 每日配置验证通过：所有日期都满足2白2夜');
     }
     console.log('========== 班表验证完成 ==========\n');
+}
+
+function calculateAssignmentScore(emp, day, shiftType) {
+    var score = 0;
+    var quota = schedulingQuotas[emp.pid];
+    var daysLeft = emp.daysInMonth - day + 1;
+    
+    // ===== 第一优先级：配额紧迫度（最重要） =====
+    var whiteRemaining = quota.whiteDays - emp.whiteDaysAssigned;
+    var nightRemaining = quota.nightDays - emp.nightDaysAssigned;
+    var totalRemaining = whiteRemaining + nightRemaining;
+    
+    if (totalRemaining > 0 && daysLeft > 0) {
+        var urgency = totalRemaining / daysLeft;
+        // 配额越紧迫，分数越高
+        score += urgency * 2000;
+        
+        // 如果某个班次特别紧迫，额外加分
+        if (shiftType === 'white' && whiteRemaining > 0) {
+            score += (whiteRemaining / daysLeft) * 1000;
+        }
+        if (shiftType === 'night' && nightRemaining > 0) {
+            score += (nightRemaining / daysLeft) * 1000;
+        }
+    }
+    
+    // ===== 第二优先级：连续性约束（软化，避免候选人不足） =====
+    if (emp.consecutiveWorkDays === 0) {
+        // 刚开始新工作块
+        if (emp.consecutiveRestDays >= 3 && emp.consecutiveRestDays <= 4) {
+            score += 500; // 休息3-4天后开始工作，最优
+        } else if (emp.consecutiveRestDays >= 2) {
+            score += 200; // 休息2天，可以开始
+        } else if (emp.consecutiveRestDays === 1) {
+            score -= 2000; // 只休息1天，不鼓励但允许（软化约束）
+        }
+    } else {
+        // 连续工作中
+        if (emp.consecutiveWorkDays === 2 || emp.consecutiveWorkDays === 3) {
+            score += 400; // 连续2-3天，最优
+        } else if (emp.consecutiveWorkDays === 1) {
+            score -= 1500; // 只工作1天，不鼓励但允许（软化约束）
+        } else if (emp.consecutiveWorkDays === 4) {
+            score += 100; // 连续4天，可接受
+        } else if (emp.consecutiveWorkDays >= 5) {
+            score -= 5000; // 连续5天以上，较强惩罚
+        }
+    }
+    
+    // ===== 第三优先级：班次切换策略 =====
+    var midPoint = Math.floor(emp.daysInMonth / 2);
+    
+    if (!emp.hasSwitchedShift) {
+        // 还未切换过班次
+        if (day <= midPoint) {
+            // 前半段：优先分配与上月末相同的班次，或白班
+            if (emp.lastShiftType === shiftType) {
+                score += 300;
+            }
+            if (shiftType === 'white' && !emp.lastShiftType) {
+                score += 200; // 没有历史记录时优先白班
+            }
+        } else {
+            // 后半段：鼓励切换到另一个班次
+            if (emp.lastShiftType && emp.lastShiftType !== shiftType) {
+                score += 600; // 鼓励切换
+            }
+        }
+    } else {
+        // 已经切换过，只能继续当前班次
+        if (emp.lastShiftType === shiftType) {
+            score += 800; // 必须匹配
+        } else {
+            score -= 5000; // 不允许再次切换
+        }
+    }
+    
+    // ===== 第四优先级：均衡性微调（错开切换时间） =====
+    if (!emp.hasSwitchedShift && day > midPoint - 5 && day < midPoint + 5) {
+        // 在中点附近，根据员工索引错开切换时间
+        // 修复：安全地将pid转换为字符串再提取数字
+        var pidStr = String(emp.pid);
+        var empIndex = parseInt(pidStr.replace(/\D/g, '')) || 0;
+        var idealSwitchDay = midPoint + (empIndex % 6) - 3;
+        
+        if (day >= idealSwitchDay && shiftType !== emp.lastShiftType) {
+            score += 150; // 鼓励在这个时间窗口切换
+        }
+    }
+    
+    return score;
 }
 
 console.log('✅ v5.0 排班算法模块已加载');
