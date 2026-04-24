@@ -159,9 +159,11 @@ $(function() {
             var workDays = parseInt($(this).find('.schedule-work-days').val(), 10);
             var preferShift = $(this).find('.schedule-prefer-shift').val();
             var preferColleagues = $(this).find('.schedule-prefer-colleagues').val();
+            var name = $(this).find('td:first').text().trim(); // 获取员工姓名
             if (isNaN(workDays) || workDays < 0) workDays = 15;
             demands.push({
                 pid: pid,
+                name: name, // 添加姓名字段
                 month: month,
                 restDays: restDays,
                 workDays: workDays,
@@ -413,13 +415,39 @@ $(function() {
         console.log('\n[第零层] 数据准备...');
         var personRestDays = {};
         demands.forEach(function(d) {
-            personRestDays[d.pid] = d.restDays ? d.restDays.split(',').map(function(x) { return parseInt(x.trim()); }).filter(function(x) { return !isNaN(x); }) : [];
+            // 解析休息日期,支持多种格式
+            var restDaysArray = [];
+            var rawInput = d.restDays || '';
+            
+            if (rawInput.trim() !== '') {
+                // 尝试多种分隔符：逗号、顿号、空格
+                var parts = rawInput.split(/[,，、\s]+/);
+                console.log('  ' + (d.name || d.pid) + ': 原始输入="' + rawInput + '", 分割后=' + JSON.stringify(parts));
+                
+                parts.forEach(function(part) {
+                    // 提取数字（支持"5日"、"第5天"等格式）
+                    var match = part.match(/(\d+)/);
+                    if (match) {
+                        var day = parseInt(match[1]);
+                        if (day >= 1 && day <= daysInMonth) {
+                            restDaysArray.push(day);
+                        }
+                    }
+                });
+                
+                // 去重并排序
+                restDaysArray = [...new Set(restDaysArray)].sort(function(a, b) { return a - b; });
+            }
+            
+            personRestDays[d.pid] = restDaysArray;
+            console.log('  ' + (d.name || d.pid) + '(pid:' + d.pid + '): 最终解析结果=' + JSON.stringify(restDaysArray));
         });
         console.log('[第零层] 完成');
+        console.log('personRestDays完整数据:', JSON.stringify(personRestDays));
         
-        // ===== 第一层：月度配额计算 =====
-        console.log('\n===== 第一层：月度配额计算 =====');
-        var monthlyQuotas = calculateMonthlyQuotas(persons, demands, daysInMonth, month);
+        // ===== 第一层:月度配额计算 =====
+        console.log('\n===== 第一层:月度配额计算 =====');
+        var monthlyQuotas = calculateMonthlyQuotas(persons, demands, daysInMonth, month, personRestDays);
         console.log('===== 第一层完成 =====\n');
         
         // ===== 第二层：逐日排班 =====

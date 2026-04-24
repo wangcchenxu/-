@@ -127,11 +127,11 @@ function calculateMonthlyQuotas(persons, demands, daysInMonth, month) {
 }
 
 /**
- * 第二层：逐日排班 - 基于块模式的核心算法
- * 核心策略：先规划工作块/休息块序列，再映射到具体日期
+ * 第二层:逐日排班 - 基于块模式的核心算法
+ * 核心策略:先规划工作块/休息块序列,再映射到具体日期
  */
 function performDailyScheduling(persons, demands, daysInMonth, month, quotaData, personRestDays) {
-    console.log('\n========== 第二层：逐日排班（块模式优化版） ==========');
+    console.log('\n========== 第二层:逐日排班(块模式优化版) ==========');
     
     // 更新全局quotas变量
     quotas = quotaData;
@@ -151,8 +151,9 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
             lastShiftType: null,
             hasSwitchedShift: false,
             daysInMonth: daysInMonth,
-            blockSequence: [], // 存储块序列
-            currentBlockIndex: 0 // 当前块的索引
+            // 不再使用块序列,改为逐日动态决策
+            workDaysRemaining: 0, // 剩余需要排班的工作日
+            currentConsecutiveWork: 0 // 当前连续工作天数
         };
     });
     
@@ -162,16 +163,24 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
         dailyCount[d] = {white: 0, night: 0, rest: 0};
     }
     
-    // 步骤1: 标记强制休息日
-    console.log('[步骤1] 标记强制休息日...');
+    // 步骤1: 标记强制休息日并初始化剩余工作日
+    console.log('[步骤1] 初始化强制休息日和剩余工作日...');
     employees.forEach(function(emp) {
         var restDays = personRestDays[emp.pid] || [];
+        var forcedRestCount = 0;
+        
         restDays.forEach(function(day) {
             if (day >= 1 && day <= daysInMonth) {
-                emp.assignments[day] = 'forced_rest'; // 标记为强制休息
+                emp.assignments[day] = 'forced_rest';
                 dailyCount[day].rest++;
+                forcedRestCount++;
             }
         });
+        
+        // 计算实际需要排班的工作日
+        emp.workDaysRemaining = quotas[emp.pid].totalWorkDays - forcedRestCount;
+        
+        console.log('  ' + emp.name + ': 总配额' + quotas[emp.pid].totalWorkDays + '天, 强制休息' + forcedRestCount + '天, 剩余' + emp.workDaysRemaining + '天');
     });
     
     // 步骤2: 加载上月末状态
@@ -180,93 +189,105 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
         var prevState = getPreviousMonthState(month, emp.pid);
         if (prevState.lastShift) {
             emp.lastShiftType = prevState.lastShift;
-            emp.consecutiveWorkDays = prevState.consecutive || 0;
-            console.log('  ' + emp.name + ': 上月末连续' + emp.lastShiftType + '班' + emp.consecutiveWorkDays + '天');
+            emp.currentConsecutiveWork = prevState.consecutive || 0;
+            console.log('  ' + emp.name + ': 上月末连续' + emp.lastShiftType + '班' + emp.currentConsecutiveWork + '天');
         } else {
             emp.consecutiveRestDays = prevState.consecutive || 0;
             console.log('  ' + emp.name + ': 上月末连续休息' + emp.consecutiveRestDays + '天');
         }
     });
     
-    // 步骤3: 为每个员工生成块序列
-    console.log('[步骤3] 生成工作块/休息块序列...');
-    employees.forEach(function(emp) {
-        var quota = quotas[emp.pid];
-        emp.blockSequence = generateBlockSequence(emp, quota, daysInMonth);
-        console.log('  ' + emp.name + '的块序列: ' + emp.blockSequence.map(function(b) {
-            return b.type + '(' + b.days + '天)';
-        }).join(' -> '));
-    });
-    
-    // 步骤4: 逐日分配 - 基于块序列
-    console.log('[步骤4] 基于块序列逐日分配...');
+    // 步骤3: 逐日分配 - 动态决策
+    console.log('[步骤3] 逐日动态分配...');
     for (var day = 1; day <= daysInMonth; day++) {
         console.log('\n--- 第' + day + '天 ---');
         
-        // 先处理强制休息日
-        employees.forEach(function(emp) {
-            if (emp.assignments[day] === 'forced_rest') {
-                // 强制休息日，跳过块序列
-                emp.consecutiveRestDays++;
-                emp.consecutiveWorkDays = 0;
-                dailyCount[day].rest++;
-            }
+        // 跳过已安排的日子(强制休息)
+        var needScheduleEmployees = employees.filter(function(emp) {
+            return !emp.assignments[day];
         });
         
-        // 基于块序列分配
-        employees.forEach(function(emp) {
-            if (emp.assignments[day]) return; // 已经安排了（强制休息）
-            
-            var block = emp.blockSequence[emp.currentBlockIndex];
-            if (!block) {
-                // 块序列用完，剩余天数为休息
+        // 筛选出还有工作配额且符合连续性要求的员工
+        var whiteCandidates = [];
+        var nightCandidates = [];
+        
+        needScheduleEmployees.forEach(function(emp) {
+            // 检查是否还有工作配额
+            if (emp.workDaysRemaining <= 0) {
                 emp.assignments[day] = 'rest';
                 emp.restDaysAssigned++;
                 emp.consecutiveRestDays++;
-                emp.consecutiveWorkDays = 0;
+                emp.currentConsecutiveWork = 0;
                 dailyCount[day].rest++;
                 return;
             }
             
-            // 判断当前块是工作还是休息
-            if (block.type === 'work') {
-                // 工作块：需要决定是白班还是夜班
-                var shiftType = determineShiftForBlock(emp, block, day);
-                emp.assignments[day] = shiftType;
-                
-                if (shiftType === 'white') {
-                    emp.whiteDaysAssigned++;
-                } else {
-                    emp.nightDaysAssigned++;
-                }
-                emp.totalDaysAssigned++;
-                emp.consecutiveWorkDays++;
-                emp.consecutiveRestDays = 0;
-                
-                // 检查班次切换
-                if (emp.lastShiftType && emp.lastShiftType !== shiftType) {
-                    emp.hasSwitchedShift = true;
-                }
-                emp.lastShiftType = shiftType;
-                
-                dailyCount[day][shiftType]++;
-                console.log('    ' + emp.name + ' -> ' + shiftType + '班 (工作块第' + block.currentDay + '/' + block.days + '天)');
-            } else {
-                // 休息块
+            // 检查连续性约束
+            if (emp.currentConsecutiveWork >= 5) {
+                // 连续工作超过5天,必须休息
                 emp.assignments[day] = 'rest';
                 emp.restDaysAssigned++;
                 emp.consecutiveRestDays++;
-                emp.consecutiveWorkDays = 0;
+                emp.currentConsecutiveWork = 0;
                 dailyCount[day].rest++;
+                console.log('    ' + emp.name + ' -> 休息(已连续工作' + emp.currentConsecutiveWork + '天)');
+                return;
             }
             
-            // 推进块内计数
-            block.currentDay++;
+            // 添加到候选池
+            whiteCandidates.push(emp);
+            nightCandidates.push(emp);
+        });
+        
+        // 为白班选择得分最高的2人
+        var whiteWorkers = selectTopWorkers(whiteCandidates, 'white', day, 2);
+        whiteWorkers.forEach(function(emp) {
+            emp.assignments[day] = 'white';
+            emp.whiteDaysAssigned++;
+            emp.totalDaysAssigned++;
+            emp.workDaysRemaining--;
+            emp.currentConsecutiveWork++;
+            emp.consecutiveRestDays = 0;
             
-            // 检查当前块是否完成
-            if (block.currentDay >= block.days) {
-                emp.currentBlockIndex++;
-                console.log('    ' + emp.name + ': 完成一个' + block.type + '块，进入下一块');
+            if (emp.lastShiftType && emp.lastShiftType !== 'white') {
+                emp.hasSwitchedShift = true;
+            }
+            emp.lastShiftType = 'white';
+            
+            dailyCount[day].white++;
+            console.log('    ' + emp.name + ' -> 白班 (剩余工作日:' + emp.workDaysRemaining + ')');
+        });
+        
+        // 为夜班选择得分最高的2人(排除已选白班的)
+        var nightCandidatesFiltered = nightCandidates.filter(function(emp) {
+            return emp.assignments[day] !== 'white';
+        });
+        var nightWorkers = selectTopWorkers(nightCandidatesFiltered, 'night', day, 2);
+        nightWorkers.forEach(function(emp) {
+            emp.assignments[day] = 'night';
+            emp.nightDaysAssigned++;
+            emp.totalDaysAssigned++;
+            emp.workDaysRemaining--;
+            emp.currentConsecutiveWork++;
+            emp.consecutiveRestDays = 0;
+            
+            if (emp.lastShiftType && emp.lastShiftType !== 'night') {
+                emp.hasSwitchedShift = true;
+            }
+            emp.lastShiftType = 'night';
+            
+            dailyCount[day].night++;
+            console.log('    ' + emp.name + ' -> 夜班 (剩余工作日:' + emp.workDaysRemaining + ')');
+        });
+        
+        // 其余人休息
+        needScheduleEmployees.forEach(function(emp) {
+            if (!emp.assignments[day]) {
+                emp.assignments[day] = 'rest';
+                emp.restDaysAssigned++;
+                emp.consecutiveRestDays++;
+                emp.currentConsecutiveWork = 0;
+                dailyCount[day].rest++;
             }
         });
         
@@ -274,12 +295,12 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
         
         // 验证每日配置
         if (dailyCount[day].white !== 2 || dailyCount[day].night !== 2) {
-            console.warn('  ⚠ 第' + day + '天不满足2白2夜要求，将进行调整...');
+            console.warn('  ⚠ 第' + day + '天不满足2白2夜要求,将进行调整...');
         }
     }
     
-    // 步骤5: 全局调整 - 确保每日2白2夜
-    console.log('\n[步骤5] 全局调整...');
+    // 步骤4: 全局调整 - 确保每日2白2夜
+    console.log('\n[步骤4] 全局调整...');
     adjustDailyConfiguration(employees, dailyCount, daysInMonth);
     
     console.log('\n========== 第二层完成 ==========\n');
@@ -287,104 +308,65 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
 }
 
 /**
- * 生成块序列：工作块和休息块交替
+ * 从候选池中选择得分最高的N个员工
  */
-function generateBlockSequence(emp, quota, daysInMonth) {
-    var blocks = [];
-    var remainingWorkDays = quota.totalWorkDays;
-    var remainingDays = daysInMonth;
-    var currentDay = 1;
+function selectTopWorkers(candidates, shiftType, day, count) {
+    // 计算每个候选人的得分
+    var scored = candidates.map(function(emp) {
+        return {
+            emp: emp,
+            score: calculateAssignmentScore(emp, shiftType, day)
+        };
+    });
     
-    // 获取上月末状态
-    var prevState = getPreviousMonthState(emp.daysInMonth, emp.pid); // 这里应该用month参数
+    // 按得分降序排序
+    scored.sort(function(a, b) {
+        return b.score - a.score;
+    });
     
-    // 如果上月末在工作，继续当前工作块
-    if (prevState.lastShift && prevState.consecutive > 0) {
-        var workBlockDays = Math.min(4, prevState.consecutive + Math.min(remainingWorkDays, 4));
-        blocks.push({
-            type: 'work',
-            days: workBlockDays,
-            currentDay: 0,
-            shiftType: null // 将在分配时决定
-        });
-        remainingWorkDays -= workBlockDays;
-        currentDay += workBlockDays;
-        remainingDays -= workBlockDays;
-    }
+    console.log('  候选' + shiftType + '班: ' + scored.length + '人');
+    scored.slice(0, Math.min(count, scored.length)).forEach(function(item) {
+        console.log('    ' + item.emp.name + ' -> ' + shiftType + '班 (分数:' + item.score + ')');
+    });
     
-    // 生成后续块序列
-    while (remainingDays > 0 && currentDay <= daysInMonth) {
-        if (remainingWorkDays > 0) {
-            // 添加工作块（3-4天）
-            var workDays = Math.min(4, remainingWorkDays);
-            if (workDays < 3 && remainingWorkDays > 0) {
-                workDays = Math.min(3, remainingWorkDays); // 至少3天
-            }
-            blocks.push({
-                type: 'work',
-                days: workDays,
-                currentDay: 0,
-                shiftType: null
-            });
-            remainingWorkDays -= workDays;
-            currentDay += workDays;
-        }
-        
-        // 添加休息块（3-4天）
-        if (currentDay <= daysInMonth) {
-            var restDays = Math.min(4, daysInMonth - currentDay + 1);
-            if (remainingWorkDays > 0) {
-                // 如果还有工作日要排，休息3-4天
-                restDays = Math.min(4, restDays);
-            }
-            blocks.push({
-                type: 'rest',
-                days: restDays,
-                currentDay: 0
-            });
-            currentDay += restDays;
-        }
-    }
-    
-    return blocks;
+    // 返回前N个员工
+    return scored.slice(0, Math.min(count, scored.length)).map(function(item) {
+        return item.emp;
+    });
 }
 
 /**
- * 决定工作块的班次类型
+ * 计算员工分配到某班次的得分
  */
-function determineShiftForBlock(emp, block, day) {
+function calculateAssignmentScore(emp, shiftType, day) {
     var quota = quotas[emp.pid];
+    var score = 0;
     
-    // 如果是第一个工作块，优先使用上月末的班次
-    if (emp.currentBlockIndex === 0 && emp.lastShiftType) {
-        if (emp.lastShiftType === 'white' && emp.whiteDaysAssigned < quota.whiteDays) {
-            return 'white';
-        } else if (emp.lastShiftType === 'night' && emp.nightDaysAssigned < quota.nightDays) {
-            return 'night';
-        }
-    }
-    
-    // 如果已经切换过班次，只能使用另一个班次
-    if (emp.hasSwitchedShift) {
-        return emp.lastShiftType === 'white' ? 'night' : 'white';
-    }
-    
-    // 根据配额决定：哪个班次剩余天数多就用哪个
-    var whiteRemaining = quota.whiteDays - emp.whiteDaysAssigned;
-    var nightRemaining = quota.nightDays - emp.nightDaysAssigned;
-    
-    if (whiteRemaining > nightRemaining) {
-        return 'white';
-    } else if (nightRemaining > whiteRemaining) {
-        return 'night';
+    // 1. 配额平衡得分(剩余配额越多,得分越高)
+    if (shiftType === 'white') {
+        var whiteRemaining = quota.whiteDays - emp.whiteDaysAssigned;
+        score += whiteRemaining * 100;
     } else {
-        // 相等时，优先使用与上月末不同的班次（促进切换）
-        if (emp.lastShiftType && emp.lastShiftType !== 'white') {
-            return 'white';
-        } else {
-            return 'night';
-        }
+        var nightRemaining = quota.nightDays - emp.nightDaysAssigned;
+        score += nightRemaining * 100;
     }
+    
+    // 2. 连续性惩罚(连续工作天数越多,得分越低,鼓励休息)
+    if (emp.currentConsecutiveWork >= 3) {
+        score -= (emp.currentConsecutiveWork - 2) * 50;
+    }
+    
+    // 3. 班次切换惩罚(避免频繁切换)
+    if (emp.lastShiftType && emp.lastShiftType !== shiftType) {
+        score -= 30; // 切换班次扣分
+    }
+    
+    // 4. 连续性奖励(如果符合连续性模式,加分)
+    if (emp.lastShiftType === shiftType && emp.currentConsecutiveWork < 4) {
+        score += 20; // 继续同一班次加分
+    }
+    
+    return score;
 }
 
 /**
