@@ -1,4 +1,4 @@
-/**
+/**更新
  * 排班算法 v5.0 - 用户需求定制版
  */
 
@@ -210,10 +210,21 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
  */
 function canWorkToday(emp, day, shiftType) {
     var quota = schedulingQuotas[emp.pid];
+    var daysLeft = emp.daysInMonth - day + 1;
+    var totalRemaining = (quota.whiteDays - emp.whiteDaysAssigned) + (quota.nightDays - emp.nightDaysAssigned);
     
     // 硬约束1：连续工作不能超过5天（绝对禁止）
+    // 但月末紧急情况下可以例外：如果剩余天数 < 剩余配额，说明必须上班
     if (emp.consecutiveWorkDays >= 5) {
-        return false;
+        // 月末紧急模式：如果不上班就无法完成配额，允许突破5天限制
+        if (daysLeft < totalRemaining) {
+            // 允许继续上班，但只限制最多6天
+            if (emp.consecutiveWorkDays >= 6) {
+                return false;
+            }
+        } else {
+            return false; // 非紧急情况，严格执行5天限制
+        }
     }
     
     // 硬约束2：月内只允许切换一次班次（绝对禁止）
@@ -556,6 +567,12 @@ function calculateAssignmentScore(emp, day, shiftType) {
         }
         if (shiftType === 'night' && nightRemaining > 0) {
             score += (nightRemaining / daysLeft) * 1000;
+        }
+        
+        // 关键修复：月末紧急分配
+        // 如果剩余天数少于剩余配额，必须立即上班，否则无法完成配额
+        if (daysLeft <= totalRemaining && daysLeft <= 5) {
+            score += 10000; // 极高优先级，确保月末配额完成
         }
     }
     
