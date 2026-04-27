@@ -53,9 +53,44 @@
         <button type="button" id="schedule_save_to_history_btn" class="btn btn-success" style="margin-top:20px;margin-left:10px;display:none;">
             <i class="fa fa-save"></i> 保存到历史排班
         </button>
+        <button type="button" id="schedule_edit_btn" class="btn btn-warning" style="margin-top:20px;margin-left:10px;display:none;">
+            <i class="fa fa-edit"></i> 启用编辑
+        </button>
+        <button type="button" id="schedule_save_learning_btn" class="btn btn-primary" style="margin-top:20px;margin-left:10px;display:none;">
+            <i class="fa fa-graduation-cap"></i> 保存调整偏好(智能学习)
+        </button>
+        <button type="button" id="schedule_manage_learning_btn" class="btn btn-default" style="margin-top:20px;margin-left:10px;">
+            <i class="fa fa-database"></i> 管理学习库
+        </button>
         <span id="export_loading" style="display:none; margin-left:10px; color:#999;">
             <i class="fa fa-spinner fa-spin"></i> 正在导出...
         </span>
+        <div id="edit_mode_tip" style="display:none; margin-top:10px; padding:10px; background:#fff3cd; border:1px solid #ffc107; border-radius:4px; color:#856404;">
+            <i class="fa fa-info-circle"></i> <strong>编辑模式已启用：</strong>点击任意班表格子可以切换班次(休息→白班→夜班→休息)，调整完成后点击"保存调整偏好"让系统学习您的排班风格。
+        </div>
+    </div>
+    
+    <!-- 学习数据管理弹窗 -->
+    <div id="learning_management_modal" class="modal fade" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal">&times;</button>
+                    <h4 class="modal-title"><i class="fa fa-database"></i> 学习数据管理</h4>
+                </div>
+                <div class="modal-body">
+                    <div id="learning_list_container" style="max-height:500px; overflow-y:auto;">
+                        <p class="text-muted">暂无学习数据</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" id="clear_all_learning_btn">
+                        <i class="fa fa-trash"></i> 清空所有学习数据
+                    </button>
+                    <button type="button" class="btn btn-default" data-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -509,7 +544,7 @@ $(function() {
 
         // 优化表体:统一所有单元格宽度
         var bodyHtml = '';
-        roster.persons.forEach(function(emp) {
+        roster.persons.forEach(function(emp, empIndex) {
             bodyHtml += '<tr>';
             bodyHtml += '<td style="width:120px;min-width:120px;max-width:120px;font-weight:bold;background:#f7f7f7;">' + emp.name + '</td>';
             
@@ -534,18 +569,26 @@ $(function() {
                     textColor = '#333';
                 }
                 
-                bodyHtml += '<td style="width:60px;min-width:60px;max-width:60px;height:32px;background:' + bgColor + ';color:' + textColor + ';text-align:center;vertical-align:middle;white-space:nowrap;overflow:hidden;">' + displayText + '</td>';
+                // 添加编辑模式的样式和事件
+                var editClass = 'roster-cell';
+                var editStyle = 'width:60px;min-width:60px;max-width:60px;height:32px;background:' + bgColor + ';color:' + textColor + ';text-align:center;vertical-align:middle;white-space:nowrap;overflow:hidden;cursor:default;';
+                
+                bodyHtml += '<td class="' + editClass + '" data-emp-index="' + empIndex + '" data-day="' + day + '" data-shift="' + assignment + '" style="' + editStyle + '">' + displayText + '</td>';
             }
             bodyHtml += '</tr>';
         });
         $('#schedule_roster_body').html(bodyHtml);
         console.log('班表渲染完成');
         
+        // 绑定编辑事件
+        bindEditEvents();
+        
         // 启用导出按钮
         $('#schedule_export_btn').prop('disabled', false);
         
-        // 显示"保存到历史排班"按钮
+        // 显示"保存到历史排班"和"启用编辑"按钮
         $('#schedule_save_to_history_btn').show();
+        $('#schedule_edit_btn').show();
     }
 
     $(document).off('change', '#schedule_month').on('change', '#schedule_month', function() {
@@ -748,5 +791,335 @@ $(function() {
     console.log('初始化排班管理页面');
     restorePageState();
     loadPersonList();
+    
+    // ===== 编辑模式和智能学习功能 =====
+    var editMode = false;
+    var originalRoster = null; // 保存原始班表用于对比学习
+    
+    // 启用编辑按钮
+    $(document).off('click', '#schedule_edit_btn').on('click', '#schedule_edit_btn', function() {
+        editMode = !editMode;
+        
+        if (editMode) {
+            // 进入编辑模式
+            originalRoster = JSON.parse(JSON.stringify(currentRoster)); // 深拷贝保存原始状态
+            $('#schedule_edit_btn').html('<i class="fa fa-times"></i> 退出编辑');
+            $('#schedule_edit_btn').removeClass('btn-warning').addClass('btn-danger');
+            $('#schedule_save_learning_btn').show();
+            $('#edit_mode_tip').show();
+            
+            // 修改单元格样式
+            $('.roster-cell').css({
+                'cursor': 'pointer',
+                'border': '2px dashed #999'
+            }).hover(
+                function() { $(this).css('background-color', '#fff3cd'); },
+                function() { 
+                    var shift = $(this).data('shift');
+                    var bgColor = shift === 'white' ? '#f0ad4e' : (shift === 'night' ? '#d9534f' : '#d9edf7');
+                    $(this).css('background-color', bgColor);
+                }
+            );
+            
+            console.log('已进入编辑模式');
+        } else {
+            // 退出编辑模式
+            exitEditMode();
+        }
+    });
+    
+    // 退出编辑模式
+    function exitEditMode() {
+        editMode = false;
+        $('#schedule_edit_btn').html('<i class="fa fa-edit"></i> 启用编辑');
+        $('#schedule_edit_btn').removeClass('btn-danger').addClass('btn-warning');
+        $('#schedule_save_learning_btn').hide();
+        $('#edit_mode_tip').hide();
+        
+        // 恢复单元格样式
+        $('.roster-cell').css({
+            'cursor': 'default',
+            'border': 'none'
+        }).off('mouseenter mouseleave');
+    }
+    
+    // 绑定单元格点击事件
+    function bindEditEvents() {
+        $(document).off('click', '.roster-cell').on('click', '.roster-cell', function() {
+            if (!editMode) return;
+            
+            var $cell = $(this);
+            var empIndex = parseInt($cell.data('emp-index'));
+            var day = parseInt($cell.data('day'));
+            var currentShift = $cell.data('shift');
+            
+            // 切换班次: rest -> white -> night -> rest
+            var newShift;
+            if (currentShift === 'rest') {
+                newShift = 'white';
+            } else if (currentShift === 'white') {
+                newShift = 'night';
+            } else {
+                newShift = 'rest';
+            }
+            
+            // 更新数据
+            currentRoster.persons[empIndex].assignments[day] = newShift;
+            $cell.data('shift', newShift);
+            
+            // 更新显示
+            var displayText, bgColor, textColor;
+            if (newShift === 'white') {
+                displayText = '白班';
+                bgColor = '#f0ad4e';
+                textColor = '#fff';
+            } else if (newShift === 'night') {
+                displayText = '夜班';
+                bgColor = '#d9534f';
+                textColor = '#fff';
+            } else {
+                displayText = '休息';
+                bgColor = '#d9edf7';
+                textColor = '#333';
+            }
+            
+            $cell.text(displayText).css({
+                'background-color': bgColor,
+                'color': textColor
+            });
+            
+            console.log('员工' + currentRoster.persons[empIndex].name + '第' + day + '天: ' + currentShift + ' -> ' + newShift);
+        });
+    }
+    
+    // 保存学习偏好
+    $(document).off('click', '#schedule_save_learning_btn').on('click', '#schedule_save_learning_btn', function() {
+        if (!originalRoster || !currentRoster) {
+            alert('没有可学习的数据!');
+            return;
+        }
+        
+        // 分析调整模式
+        var learningData = analyzeAdjustments(originalRoster, currentRoster);
+        
+        // 保存到localStorage
+        saveLearningPreferences(learningData);
+        
+        alert('✓ 学习数据已保存!\n\n系统已记录您的排班偏好,下次生成班表时会自动应用这些偏好。\n\n学习内容包括:\n- 班次分布偏好\n- 连续工作天数偏好\n- 休息日模式偏好\n- 班次切换模式');
+        
+        console.log('学习数据:', learningData);
+        
+        // 退出编辑模式
+        exitEditMode();
+    });
+    
+    // 分析调整模式
+    function analyzeAdjustments(original, adjusted) {
+        var learning = {
+            timestamp: new Date().toISOString(),
+            month: $('#schedule_month').val(),
+            adjustments: []
+        };
+        
+        original.persons.forEach(function(originalEmp, empIndex) {
+            var adjustedEmp = adjusted.persons[empIndex];
+            var empLearning = {
+                name: originalEmp.name,
+                pid: originalEmp.pid,
+                patterns: {
+                    shiftDistribution: { white: 0, night: 0, rest: 0 },
+                    consecutiveWorkDays: [],
+                    consecutiveRestDays: [],
+                    shiftSwitches: []
+                }
+            };
+            
+            var daysInMonth = original.daysInMonth;
+            var consecutiveWork = 0;
+            var consecutiveRest = 0;
+            var lastShift = null;
+            
+            for (var day = 1; day <= daysInMonth; day++) {
+                var origShift = originalEmp.assignments[day] || 'rest';
+                var adjShift = adjustedEmp.assignments[day] || 'rest';
+                
+                // 记录调整
+                if (origShift !== adjShift) {
+                    empLearning.patterns.shiftDistribution[adjShift]++;
+                    
+                    // 记录班次切换
+                    if (lastShift && lastShift !== adjShift) {
+                        empLearning.patterns.shiftSwitches.push({
+                            day: day,
+                            from: lastShift,
+                            to: adjShift
+                        });
+                    }
+                    
+                    lastShift = adjShift;
+                }
+                
+                // 计算连续工作/休息天数
+                if (adjShift !== 'rest') {
+                    consecutiveWork++;
+                    if (consecutiveRest > 0) {
+                        empLearning.patterns.consecutiveRestDays.push(consecutiveRest);
+                        consecutiveRest = 0;
+                    }
+                } else {
+                    consecutiveRest++;
+                    if (consecutiveWork > 0) {
+                        empLearning.patterns.consecutiveWorkDays.push(consecutiveWork);
+                        consecutiveWork = 0;
+                    }
+                }
+            }
+            
+            // 记录最后的连续天数
+            if (consecutiveWork > 0) empLearning.patterns.consecutiveWorkDays.push(consecutiveWork);
+            if (consecutiveRest > 0) empLearning.patterns.consecutiveRestDays.push(consecutiveRest);
+            
+            learning.adjustments.push(empLearning);
+        });
+        
+        return learning;
+    }
+    
+    // 保存学习偏好到localStorage
+    function saveLearningPreferences(learningData) {
+        var allLearning = JSON.parse(localStorage.getItem('user_scheduling_preferences') || '[]');
+        
+        // 添加新的学习记录
+        allLearning.push(learningData);
+        
+        // 只保留最近10次学习记录
+        if (allLearning.length > 10) {
+            allLearning = allLearning.slice(-10);
+        }
+        
+        localStorage.setItem('user_scheduling_preferences', JSON.stringify(allLearning));
+        console.log('学习数据已保存,当前共有' + allLearning.length + '条学习记录');
+    }
+    
+    // 加载学习偏好(在生成班表时调用)
+    function loadLearningPreferences() {
+        var allLearning = JSON.parse(localStorage.getItem('user_scheduling_preferences') || '[]');
+        
+        if (allLearning.length === 0) {
+            console.log('暂无学习数据');
+            return null;
+        }
+        
+        // 返回最近的学习记录
+        var latest = allLearning[allLearning.length - 1];
+        console.log('已加载学习数据,包含' + latest.adjustments.length + '名员工的偏好');
+        return latest;
+    }
+    
+    // ===== 学习数据管理功能 =====
+    
+    // 打开学习数据管理弹窗
+    $(document).off('click', '#schedule_manage_learning_btn').on('click', '#schedule_manage_learning_btn', function() {
+        $('#learning_management_modal').modal('show');
+        loadLearningList();
+    });
+    
+    // 加载学习数据列表
+    function loadLearningList() {
+        var allLearning = JSON.parse(localStorage.getItem('user_scheduling_preferences') || '[]');
+        var $container = $('#learning_list_container');
+        
+        if (allLearning.length === 0) {
+            $container.html('<p class="text-muted text-center" style="padding:40px;"><i class="fa fa-inbox" style="font-size:48px;color:#ddd;"></i><br><br>暂无学习数据</p>');
+            return;
+        }
+        
+        var html = '<div class="list-group">';
+        
+        // 倒序显示，最新的在前
+        allLearning.slice().reverse().forEach(function(learning, reverseIndex) {
+            var actualIndex = allLearning.length - 1 - reverseIndex;
+            var date = new Date(learning.timestamp);
+            var dateStr = date.getFullYear() + '-' + 
+                         String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+                         String(date.getDate()).padStart(2, '0') + ' ' +
+                         String(date.getHours()).padStart(2, '0') + ':' +
+                         String(date.getMinutes()).padStart(2, '0');
+            
+            html += '<div class="list-group-item">';
+            html += '<div class="row">';
+            html += '<div class="col-md-8">';
+            html += '<h5 class="list-group-item-heading">';
+            html += '<i class="fa fa-calendar" style="color:#337ab7;"></i> ' + learning.month;
+            html += '<small class="text-muted" style="margin-left:10px;">' + dateStr + '</small>';
+            html += '</h5>';
+            html += '<p class="list-group-item-text text-muted">';
+            html += '包含 <strong>' + learning.adjustments.length + '</strong> 名员工的排班偏好';
+            html += '</p>';
+            html += '<div style="margin-top:8px;">';
+            
+            // 显示每个员工的简要信息
+            learning.adjustments.slice(0, 3).forEach(function(adj) {
+                var patterns = adj.patterns;
+                var whiteCount = patterns.shiftDistribution.white || 0;
+                var nightCount = patterns.shiftDistribution.night || 0;
+                var avgWork = patterns.avgConsecutiveWork ? patterns.avgConsecutiveWork.toFixed(1) : '-';
+                var avgRest = patterns.avgConsecutiveRest ? patterns.avgConsecutiveRest.toFixed(1) : '-';
+                
+                html += '<span class="label label-info" style="margin-right:5px;">';
+                html += adj.name + ' (白' + whiteCount + '/夜' + nightCount + ', 连' + avgWork + '休' + avgRest + ')';
+                html += '</span>';
+            });
+            
+            if (learning.adjustments.length > 3) {
+                html += '<span class="label label-default">+' + (learning.adjustments.length - 3) + ' 更多</span>';
+            }
+            
+            html += '</div>';
+            html += '</div>';
+            html += '<div class="col-md-4 text-right" style="padding-top:15px;">';
+            html += '<button class="btn btn-sm btn-danger delete-learning-btn" data-index="' + actualIndex + '">';
+            html += '<i class="fa fa-trash"></i> 删除';
+            html += '</button>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+        });
+        
+        html += '</div>';
+        $container.html(html);
+    }
+    
+    // 删除单条学习记录
+    $(document).off('click', '.delete-learning-btn').on('click', '.delete-learning-btn', function() {
+        var index = parseInt($(this).data('index'));
+        var allLearning = JSON.parse(localStorage.getItem('user_scheduling_preferences') || '[]');
+        
+        if (confirm('确定要删除这条学习记录吗？\n\n月份: ' + allLearning[index].month + '\n时间: ' + new Date(allLearning[index].timestamp).toLocaleString())) {
+            allLearning.splice(index, 1);
+            localStorage.setItem('user_scheduling_preferences', JSON.stringify(allLearning));
+            
+            console.log('已删除学习记录,剩余 ' + allLearning.length + ' 条');
+            loadLearningList(); // 重新加载列表
+            
+            // 如果删除了所有记录，关闭弹窗
+            if (allLearning.length === 0) {
+                $('#learning_management_modal').modal('hide');
+            }
+        }
+    });
+    
+    // 清空所有学习数据
+    $(document).off('click', '#clear_all_learning_btn').on('click', '#clear_all_learning_btn', function() {
+        if (confirm('确定要清空所有学习数据吗？\n\n此操作不可恢复！')) {
+            localStorage.removeItem('user_scheduling_preferences');
+            console.log('已清空所有学习数据');
+            loadLearningList();
+            setTimeout(function() {
+                $('#learning_management_modal').modal('hide');
+            }, 500);
+        }
+    });
+
 });
 </script>

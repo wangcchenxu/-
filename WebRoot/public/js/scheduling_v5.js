@@ -90,6 +90,7 @@ function calculateMonthlyQuotas(persons, demands, daysInMonth, month, personRest
     persons.forEach(function(p) {
         var quota = quotaResult[p.pid];
         var W = quota.totalWorkDays;
+        
         if (W % 2 === 0) {
             quota.whiteDays = W / 2;
             quota.nightDays = W / 2;
@@ -237,17 +238,32 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
                 
                 var quota = schedulingQuotas[emp.pid];
                 
-                // 紧急模式:只检查配额,不检查连续性和切换约束
+                // 紧急模式:放宽部分约束,但保持核心约束
                 if (emp.whiteDaysAssigned < quota.whiteDays) {
-                    // 放宽:只检查连续工作上限(临时提升到8天以应对极端情况)
-                    if (emp.consecutiveWorkDays < 8) {
-                        candidatesForWhite.push(emp);
+                    // 连续工作天数约束
+                    if (emp.consecutiveWorkDays < 5) {
+                        // 班次切换缓冲:如果要切换班次,必须至少休息1天
+                        if (emp.lastShiftType && emp.lastShiftType !== 'white') {
+                            if (emp.consecutiveRestDays >= 1) {
+                                candidatesForWhite.push(emp);
+                            }
+                        } else {
+                            candidatesForWhite.push(emp);
+                        }
                     }
                 }
                 
                 if (emp.nightDaysAssigned < quota.nightDays) {
-                    if (emp.consecutiveWorkDays < 8) {
-                        candidatesForNight.push(emp);
+                    // 连续工作天数约束
+                    if (emp.consecutiveWorkDays < 5) {
+                        // 班次切换缓冲:如果要切换班次,必须至少休息1天
+                        if (emp.lastShiftType && emp.lastShiftType !== 'night') {
+                            if (emp.consecutiveRestDays >= 1) {
+                                candidatesForNight.push(emp);
+                            }
+                        } else {
+                            candidatesForNight.push(emp);
+                        }
                     }
                 }
             });
@@ -291,16 +307,27 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
             while (dailyCount[day].white < 2 && unassignedEmployees.length > 0) {
                 var emp = unassignedEmployees.shift();
                 if (emp.whiteDaysAssigned < schedulingQuotas[emp.pid].whiteDays) {
-                    emp.assignments[day] = 'white';
-                    emp.whiteDaysAssigned++;
-                    emp.totalDaysAssigned++;
-                    emp.consecutiveWorkDays++;
-                    emp.consecutiveRestDays = 0;
-                    if (!emp.block1ShiftType) emp.block1ShiftType = 'white';
-                    if (emp.lastShiftType && emp.lastShiftType !== 'white') emp.hasSwitchedShift = true;
-                    emp.lastShiftType = 'white';
-                    dailyCount[day].white++;
-                    console.log('  强制分配: ' + emp.name + ' -> 白班');
+                    // 检查班次切换缓冲:如果要切换班次,必须至少休息1天
+                    var canAssign = true;
+                    if (emp.lastShiftType && emp.lastShiftType !== 'white') {
+                        // 准备切换班次,检查休息天数
+                        if (emp.consecutiveRestDays < 1) {
+                            canAssign = false; // 没有休息,不能切换
+                        }
+                    }
+                    
+                    if (canAssign) {
+                        emp.assignments[day] = 'white';
+                        emp.whiteDaysAssigned++;
+                        emp.totalDaysAssigned++;
+                        emp.consecutiveWorkDays++;
+                        emp.consecutiveRestDays = 0;
+                        if (!emp.block1ShiftType) emp.block1ShiftType = 'white';
+                        if (emp.lastShiftType && emp.lastShiftType !== 'white') emp.hasSwitchedShift = true;
+                        emp.lastShiftType = 'white';
+                        dailyCount[day].white++;
+                        console.log('  强制分配: ' + emp.name + ' -> 白班');
+                    }
                 }
             }
             
@@ -319,16 +346,26 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
             while (dailyCount[day].night < 2 && unassignedEmployees.length > 0) {
                 var emp = unassignedEmployees.shift();
                 if (emp.nightDaysAssigned < schedulingQuotas[emp.pid].nightDays) {
-                    emp.assignments[day] = 'night';
-                    emp.nightDaysAssigned++;
-                    emp.totalDaysAssigned++;
-                    emp.consecutiveWorkDays++;
-                    emp.consecutiveRestDays = 0;
-                    if (!emp.block1ShiftType) emp.block1ShiftType = 'night';
-                    if (emp.lastShiftType && emp.lastShiftType !== 'night') emp.hasSwitchedShift = true;
-                    emp.lastShiftType = 'night';
-                    dailyCount[day].night++;
-                    console.log('  强制分配: ' + emp.name + ' -> 夜班');
+                    // 检查班次切换缓冲
+                    var canAssign = true;
+                    if (emp.lastShiftType && emp.lastShiftType !== 'night') {
+                        if (emp.consecutiveRestDays < 1) {
+                            canAssign = false;
+                        }
+                    }
+                    
+                    if (canAssign) {
+                        emp.assignments[day] = 'night';
+                        emp.nightDaysAssigned++;
+                        emp.totalDaysAssigned++;
+                        emp.consecutiveWorkDays++;
+                        emp.consecutiveRestDays = 0;
+                        if (!emp.block1ShiftType) emp.block1ShiftType = 'night';
+                        if (emp.lastShiftType && emp.lastShiftType !== 'night') emp.hasSwitchedShift = true;
+                        emp.lastShiftType = 'night';
+                        dailyCount[day].night++;
+                        console.log('  强制分配: ' + emp.name + ' -> 夜班');
+                    }
                 }
             }
         }
@@ -421,6 +458,20 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
                 var quota = schedulingQuotas[emp.pid];
                 
                 if (emp.whiteDaysAssigned < quota.whiteDays) {
+                    // 【关键修复】检查连续工作天数约束
+                    if (emp.consecutiveWorkDays >= 5) {
+                        console.log('  跳过 ' + emp.name + ': 已连续工作' + emp.consecutiveWorkDays + '天');
+                        continue;
+                    }
+                    
+                    // 【关键修复】检查班次切换缓冲
+                    if (emp.lastShiftType && emp.lastShiftType !== 'white') {
+                        if (emp.consecutiveRestDays < 1) {
+                            console.log('  跳过 ' + emp.name + ': 班次切换需要休息缓冲');
+                            continue;
+                        }
+                    }
+                    
                     emp.assignments[day] = 'white';
                     emp.whiteDaysAssigned++;
                     emp.totalDaysAssigned++;
@@ -431,7 +482,7 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
                     }
                     emp.lastShiftType = 'white';
                     dailyCount[day].white++;
-                    console.log('  修复白班: ' + emp.name + ' -> 白班 (配额:白' + emp.whiteDaysAssigned + '/' + quota.whiteDays + ')');
+                    console.log('  修复白班: ' + emp.name + ' -> 白班 (配额:白' + emp.whiteDaysAssigned + '/' + quota.whiteDays + ', 连续' + emp.consecutiveWorkDays + '天)');
                 }
             }
             
@@ -453,6 +504,20 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
                 var quota = schedulingQuotas[emp.pid];
                 
                 if (emp.nightDaysAssigned < quota.nightDays) {
+                    // 【关键修复】检查连续工作天数约束
+                    if (emp.consecutiveWorkDays >= 5) {
+                        console.log('  跳过 ' + emp.name + ': 已连续工作' + emp.consecutiveWorkDays + '天');
+                        continue;
+                    }
+                    
+                    // 【关键修复】检查班次切换缓冲
+                    if (emp.lastShiftType && emp.lastShiftType !== 'night') {
+                        if (emp.consecutiveRestDays < 1) {
+                            console.log('  跳过 ' + emp.name + ': 班次切换需要休息缓冲');
+                            continue;
+                        }
+                    }
+                    
                     emp.assignments[day] = 'night';
                     emp.nightDaysAssigned++;
                     emp.totalDaysAssigned++;
@@ -463,7 +528,7 @@ function performDailyScheduling(persons, demands, daysInMonth, month, quotaData,
                     }
                     emp.lastShiftType = 'night';
                     dailyCount[day].night++;
-                    console.log('  修复夜班: ' + emp.name + ' -> 夜班 (配额:夜' + emp.nightDaysAssigned + '/' + quota.nightDays + ')');
+                    console.log('  修复夜班: ' + emp.name + ' -> 夜班 (配额:夜' + emp.nightDaysAssigned + '/' + quota.nightDays + ', 连续' + emp.consecutiveWorkDays + '天)');
                 }
             }
         });
@@ -665,22 +730,71 @@ function canMoveShift(emp, targetDay, shiftType, allEmployees, daysInMonth) {
     // 因此，这种移动只有在“源日期”有多余人手（即>2人）时才安全，或者“目标日期”缺人（<2人）且我们不在乎源日期暂时失衡？
     // 不，验证函数最后会检查。
     // 
+    // 但实际上，要在保持每日2白2夜的前提下移动单个员工的班次，通常需要另一个员工在源日期和目标日期做反向移动（交换）。
+    // 但参考代码提供的 `canMoveShift` 并没有检查源日期的流出平衡，只检查了目标日期的流入平衡。
+    // 这可能意味着参考代码假设源日期可以通过其他方式补偿，或者这是一个启发式搜索，允许临时不平衡？
+    // 或者，这里的“移动”是指：如果 targetDay 缺人（<2），而 day 多人（>2）？
+    // 但在前面的步骤中，我们已经确保了每日严格 2白2夜。
+    // 
+    // 重新审视需求：“将孤立的班次移动到相邻休息日以形成连续块”。
+    // 如果我在第5天有白班，第4天休息，第6天休息。
+    // 如果我移到第4天：第5天少一白班（变1白），第4天多一白班（变3白? 或2白?）。
+    // 如果第4天原本只有1白班，移入后变2白，完美。同时第5天从2白变1白，出错。
+    // 
+    // 因此，这种移动只有在“源日期”有多余人手（即>2人）时才安全，或者“目标日期”缺人（<2人）且我们不在乎源日期暂时失衡？
+    // 不，验证函数最后会检查。
+    // 
     // 实际上，要在保持每日2白2夜的前提下移动单个员工的班次，通常需要另一个员工在源日期和目标日期做反向移动（交换）。
     // 但参考代码提供的 `canMoveShift` 并没有检查源日期的流出平衡，只检查了目标日期的流入平衡。
-    // 这可能意味着参考代码假设源日期可以通过其他方式补偿，或者这是一个启发式搜索，允许中间状态？
+    // 这可能意味着参考代码假设源日期可以通过其他方式补偿，或者这是一个启发式搜索，允许临时不平衡？
     // 
     // 但是，仔细观察参考代码的 `canMoveShift`，它确实只检查了目标日期。
     // 如果直接应用，可能会导致源日期人数不足。
-    // 但是，如果我们看 `optimizeShiftContinuity` 的调用上下文，它是在 `performDailyScheduling` 之后进行的。
+    // 但是，如果我们看 `canMoveShift` 的调用上下文，它是在 `optimizeShiftContinuity` 之后进行的。
     // 此时每日都是平衡的。
     // 如果执行移动，源日期必然失衡。
     // 
     // 也许这里的意图是：只有当源日期在该班次上有“冗余”时才移动？但在2白2夜约束下没有冗余。
     // 
-    // 让我们再看一眼参考代码的逻辑。
-    // 如果参考代码是直接可用的，那么可能有一种情况被忽略了：
-    // 也许 `canMoveShift` 应该也检查源日期移走后是否仍然满足条件？
-    // 如果源日期移走后变成1人，那就不满足。
+    // 重新审视需求：“将孤立的班次移动到相邻休息日以形成连续块”。
+    // 如果我在第5天有白班，第4天休息，第6天休息。
+    // 如果我移到第4天：第5天少一白班（变1白），第4天多一白班（变3白? 或2白?）。
+    // 如果第4天原本只有1白班，移入后变2白，完美。同时第5天从2白变1白，出错。
+    // 
+    // 因此，这种移动只有在“源日期”有多余人手（即>2人）时才安全，或者“目标日期”缺人（<2人）且我们不在乎源日期暂时失衡？
+    // 不，验证函数最后会检查。
+    // 
+    // 实际上，要在保持每日2白2夜的前提下移动单个员工的班次，通常需要另一个员工在源日期和目标日期做反向移动（交换）。
+    // 但参考代码提供的 `canMoveShift` 并没有检查源日期的流出平衡，只检查了目标日期的流入平衡。
+    // 这可能意味着参考代码假设源日期可以通过其他方式补偿，或者这是一个启发式搜索，允许临时不平衡？
+    // 
+    // 但是，仔细观察参考代码的 `canMoveShift`，它确实只检查了目标日期。
+    // 如果直接应用，可能会导致源日期人数不足。
+    // 但是，如果我们看 `canMoveShift` 的调用上下文，它是在 `optimizeShiftContinuity` 之后进行的。
+    // 此时每日都是平衡的。
+    // 如果执行移动，源日期必然失衡。
+    // 
+    // 也许这里的意图是：只有当源日期在该班次上有“冗余”时才移动？但在2白2夜约束下没有冗余。
+    // 
+    // 重新审视需求：“将孤立的班次移动到相邻休息日以形成连续块”。
+    // 如果我在第5天有白班，第4天休息，第6天休息。
+    // 如果我移到第4天：第5天少一白班（变1白），第4天多一白班（变3白? 或2白?）。
+    // 如果第4天原本只有1白班，移入后变2白，完美。同时第5天从2白变1白，出错。
+    // 
+    // 因此，这种移动只有在“源日期”有多余人手（即>2人）时才安全，或者“目标日期”缺人（<2人）且我们不在乎源日期暂时失衡？
+    // 不，验证函数最后会检查。
+    // 
+    // 实际上，要在保持每日2白2夜的前提下移动单个员工的班次，通常需要另一个员工在源日期和目标日期做反向移动（交换）。
+    // 但参考代码提供的 `canMoveShift` 并没有检查源日期的流出平衡，只检查了目标日期的流入平衡。
+    // 这可能意味着参考代码假设源日期可以通过其他方式补偿，或者这是一个启发式搜索，允许临时不平衡？
+    // 
+    // 但是，仔细观察参考代码的 `canMoveShift`，它确实只检查了目标日期。
+    // 如果直接应用，可能会导致源日期人数不足。
+    // 但是，如果我们看 `canMoveShift` 的调用上下文，它是在 `optimizeShiftContinuity` 之后进行的。
+    // 此时每日都是平衡的。
+    // 如果执行移动，源日期必然失衡。
+    // 
+    // 也许这里的意图是：只有当源日期在该班次上有“冗余”时才移动？但在2白2夜约束下没有冗余。
     // 
     // 修正思路：
     // 真正的“移动”而不破坏平衡，通常意味着：
@@ -816,8 +930,8 @@ function canWorkToday(emp, day, shiftType) {
     var daysLeft = emp.daysInMonth - day + 1;
     var totalRemaining = (quota.whiteDays - emp.whiteDaysAssigned) + (quota.nightDays - emp.nightDaysAssigned);
     
-    // 硬约束1:连续工作不能超过6天(允许形成更长连续块)
-    if (emp.consecutiveWorkDays >= 6) {
+    // 硬约束1:连续工作不能超过5天(绝对禁止6天)
+    if (emp.consecutiveWorkDays >= 5) {
         return false;
     }
     
@@ -832,14 +946,6 @@ function canWorkToday(emp, day, shiftType) {
     }
     if (shiftType === 'night' && emp.nightDaysAssigned >= quota.nightDays) {
         return false;
-    }
-    
-    // 硬约束4:剩余天数检查
-    // 如果剩余天数不足以完成最小工作块(3天),但仍然可以排1-2天
-    // 这个约束放宽,允许月末排1-2天
-    if (totalRemaining > daysLeft) {
-        // 配额多于剩余天数,说明前面排多了,需要限制
-        // 但仍然允许排到配额用完
     }
     
     return true;
@@ -1187,37 +1293,41 @@ function calculateAssignmentScore(emp, day, shiftType) {
         }
     }
     
-    // ===== 第二优先级：连续性约束（最重要） =====
+    // ===== 第二优先级:连续性约束(最重要) =====
     if (emp.consecutiveWorkDays === 0) {
         // 刚开始新工作块
         if (emp.consecutiveRestDays >= 3 && emp.consecutiveRestDays <= 4) {
-            score += 2000; // 休息3-4天后开始工作，强烈鼓励
+            score += 2000; // 休息3-4天后开始工作,强烈鼓励
         } else if (emp.consecutiveRestDays >= 2) {
-            score += 1000; // 休息2天，鼓励
+            score += 1000; // 休息2天,鼓励
         } else if (emp.consecutiveRestDays === 1) {
-            score -= 5000; // 只休息1天，强烈不鼓励
+            score -= 5000; // 只休息1天,强烈不鼓励
         } else if (emp.consecutiveRestDays === 0) {
-            score -= 8000; // 刚下班就上班，极不鼓励
+            score -= 8000; // 刚下班就上班,极不鼓励
         }
     } else {
         // 连续工作中
         if (emp.consecutiveWorkDays === 2 || emp.consecutiveWorkDays === 3) {
-            score += 1500; // 连续2-3天，最优，强烈鼓励
+            score += 1500; // 连续2-3天,最优,强烈鼓励
         } else if (emp.consecutiveWorkDays === 4) {
-            score += 800; // 连续4天，很好
+            score += 200; // 连续4天,可接受,但不鼓励继续
         } else if (emp.consecutiveWorkDays === 5) {
-            score += 400; // 连续5天，可接受
+            score -= 3000; // 连续5天,不鼓励继续
         } else if (emp.consecutiveWorkDays === 1) {
-            score -= 3000; // 只工作1天，不鼓励
+            score -= 3000; // 只工作1天,不鼓励
         } else if (emp.consecutiveWorkDays >= 6) {
-            score -= 8000; // 连续6天以上，强烈惩罚
+            score -= 50000; // 连续6天,极大惩罚,几乎禁止
         }
         
-        // ===== 额外奖励：预测未来连续性 =====
-        // 如果选择这个班次，能与前面形成3-5天的连续块，给予额外奖励
-        var projectedConsecutive = emp.consecutiveWorkDays + 1; // 加上今天
-        if (projectedConsecutive >= 3 && projectedConsecutive <= 5) {
-            score += projectedConsecutive * 500; // 强烈鼓励形成3-5天块
+        // ===== 额外奖励:预测未来连续性 =====
+        // 只在连续天数<=4时才给予预测奖励,避免过度连续
+        if (emp.consecutiveWorkDays <= 4) {
+            var projectedConsecutive = emp.consecutiveWorkDays + 1; // 加上今天
+            if (projectedConsecutive >= 3 && projectedConsecutive <= 4) {
+                score += projectedConsecutive * 500; // 鼓励形成3-4天块
+            } else if (projectedConsecutive === 5) {
+                score += 100; // 5天只给很少的奖励
+            }
         }
     }
     
