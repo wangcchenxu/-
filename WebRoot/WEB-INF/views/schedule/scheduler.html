@@ -24,11 +24,12 @@
             <thead>
                 <tr>
                     <th style="width:15%;">员工姓名</th>
-                    <th style="width:12%;">本月上班天数</th>
-                    <th style="width:18%;">休息日期（可多选，用逗号分隔）</th>
-                    <th style="width:15%;">偏好班次（选填）</th>
-                    <th style="width:20%;">希望一起上班的同事（选填，用逗号分隔）</th>
-                    <th style="width:20%;">操作</th>
+                    <th style="width:10%;">本月上班天数</th>
+                    <th style="width:15%;">休息日期（优先级最高）</th>
+                    <th style="width:15%;">意向上班日期（优先级次之）</th>
+                    <th style="width:12%;">本月起始班次</th>
+                    <th style="width:18%;">希望一起上班的同事</th>
+                    <th style="width:15%;">操作</th>
                 </tr>
             </thead>
             <tbody id="schedule_demand_body">
@@ -106,6 +107,16 @@ $(function() {
     console.log('排班管理页面加载...');
     var currentMonth = new Date().toISOString().substring(0, 7);
     $('#schedule_month').val(currentMonth);
+    
+    // 关键修复：页面加载时自动恢复当前月份的班表
+    setTimeout(function() {
+        restoreRosterForMonth(currentMonth);
+        if (currentRoster) {
+            console.log('✓ 自动恢复' + currentMonth + '的班表');
+        } else {
+            console.log('ℹ ' + currentMonth + '没有已保存的班表');
+        }
+    }, 100); // 延迟100ms确保DOM和脚本加载完成
     
     var scheduleGenerated = false;
     var generatedMonth = null;
@@ -191,18 +202,20 @@ $(function() {
         $('#schedule_demand_body tr').each(function() {
             var pid = $(this).find('.schedule-work-days').data('pid');
             var restDays = $(this).find('.schedule-rest-days').val();
+            var startWorkDays = $(this).find('.schedule-start-work-days').val();
             var workDays = parseInt($(this).find('.schedule-work-days').val(), 10);
-            var preferShift = $(this).find('.schedule-prefer-shift').val();
+            var preferStartShift = $(this).find('.schedule-prefer-start-shift').val();
             var preferColleagues = $(this).find('.schedule-prefer-colleagues').val();
-            var name = $(this).find('td:first').text().trim(); // 获取员工姓名
+            var name = $(this).find('td:first').text().trim();
             if (isNaN(workDays) || workDays < 0) workDays = 15;
             demands.push({
                 pid: pid,
-                name: name, // 添加姓名字段
+                name: name,
                 month: month,
                 restDays: restDays,
+                startWorkDays: startWorkDays,
                 workDays: workDays,
-                preferShift: preferShift,
+                preferStartShift: preferStartShift,
                 preferColleagues: preferColleagues
             });
         });
@@ -308,16 +321,18 @@ $(function() {
                 rows.forEach(function(person) {
                     var demand = savedDemands.find(function(item) { return item.pid === person.pid; }) || {};
                     var workDaysValue = demand.workDays || 15;
-                    var preferShift = demand.preferShift || '';
+                    var preferStartShift = demand.preferStartShift || '';
                     var preferColleagues = demand.preferColleagues || '';
+                    var startWorkDays = demand.startWorkDays || '';
                     html += '<tr>';
                     html += '<td>' + person.name + '</td>';
                     html += '<td><input type="number" min="0" max="' + daysInMonth + '" class="schedule-work-days" data-pid="' + person.pid + '" value="' + workDaysValue + '" style="width:100%;padding:5px;"></td>';
                     html += '<td><input type="text" class="schedule-rest-days" data-pid="' + person.pid + '" value="' + (demand.restDays || '') + '" placeholder="例：5,6,12,13" style="width:100%;padding:5px;"></td>';
-                    html += '<td><select class="schedule-prefer-shift" data-pid="' + person.pid + '" style="width:100%;padding:5px;">';
+                    html += '<td><input type="text" class="schedule-start-work-days" data-pid="' + person.pid + '" value="' + startWorkDays + '" placeholder="例：1,2,3,8,9,10" style="width:100%;padding:5px;"></td>';
+                    html += '<td><select class="schedule-prefer-start-shift" data-pid="' + person.pid + '" style="width:100%;padding:5px;">';
                     html += '<option value="">不指定</option>';
-                    html += '<option value="white"' + (preferShift === 'white' ? ' selected' : '') + '>前半月白班</option>';
-                    html += '<option value="night"' + (preferShift === 'night' ? ' selected' : '') + '>前半月夜班</option>';
+                    html += '<option value="white"' + (preferStartShift === 'white' ? ' selected' : '') + '>白班</option>';
+                    html += '<option value="night"' + (preferStartShift === 'night' ? ' selected' : '') + '>夜班</option>';
                     html += '</select></td>';
                     html += '<td><input type="text" class="schedule-prefer-colleagues" data-pid="' + person.pid + '" value="' + preferColleagues + '" placeholder="例：马泽,王晗" style="width:100%;padding:5px;"></td>';
                     html += '<td><button type="button" class="btn btn-xs btn-danger schedule-delete-demand" data-pid="' + person.pid + '"><i class="fa fa-trash"></i> 删除</button></td>';
@@ -338,6 +353,9 @@ $(function() {
                     html += '<td>员工' + i + '</td>';
                     html += '<td><input type="number" min="0" max="' + daysInMonth + '" class="schedule-work-days" data-pid="' + pid + '" value="' + workDaysValue + '" style="width:100%;padding:5px;"></td>';
                     html += '<td><input type="text" class="schedule-rest-days" data-pid="' + pid + '" value="' + (demand.restDays || '') + '" placeholder="例：5,6,12,13" style="width:100%;padding:5px;"></td>';
+                    html += '<td><input type="text" class="schedule-start-work-days" data-pid="' + pid + '" value="' + (demand.startWorkDays || '') + '" placeholder="例：1,2,3,8,9,10" style="width:100%;padding:5px;"></td>';
+                    html += '<td><select class="schedule-prefer-start-shift" data-pid="' + pid + '" style="width:100%;padding:5px;"><option value="">不指定</option><option value="white">白班</option><option value="night">夜班</option></select></td>';
+                    html += '<td><input type="text" class="schedule-prefer-colleagues" data-pid="' + pid + '" value="' + (demand.preferColleagues || '') + '" placeholder="例：马泽,王晗" style="width:100%;padding:5px;"></td>';
                     html += '<td><button type="button" class="btn btn-xs btn-danger schedule-delete-demand" data-pid="' + pid + '"><i class="fa fa-trash"></i> 删除</button></td>';
                     html += '</tr>';
                 }
@@ -487,6 +505,8 @@ $(function() {
         
         // ===== 第二层：逐日排班 =====
         console.log('\n===== 第二层：逐日排班 =====');
+        // 调用逐日排班算法
+        console.log('调用逐日排班算法...');
         var employees = performDailyScheduling(persons, demands, daysInMonth, month, monthlyQuotas, personRestDays);
         console.log('===== 第二层完成 =====\n');
         
@@ -563,7 +583,12 @@ $(function() {
                     displayText = '夜班';
                     bgColor = '#d9534f';
                     textColor = '#fff';
-                } else if (assignment === 'rest') {
+                } else if (assignment === 'rest' || assignment === 'forced_rest') {
+                    displayText = '休息';
+                    bgColor = '#d9edf7';
+                    textColor = '#333';
+                } else {
+                    // 兜底处理:任何未识别的状态都显示为休息
                     displayText = '休息';
                     bgColor = '#d9edf7';
                     textColor = '#333';
