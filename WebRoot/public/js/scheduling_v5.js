@@ -1,59 +1,32 @@
-/**更新 v6.0 - 修复月末配额问题
- * 排班算法 v5.0 - 用户需求定制版
- */
-
-// 版本标记
-$.ajax({
-    url: '/FinalScheduler/ajax/api/log',
-    type: 'POST',
-    contentType: 'application/json',
-    data: JSON.stringify({
-        level: 'info',
-        message: '排班算法 v6.0 初始化',
-        details: '修复内容: 配额计算考虑强制休息日, 确保月末正常排班'
-    }),
-    async: true
-});
-
-function getCrossMonthMemory() {
-    var memory = JSON.parse(localStorage.getItem('cross_month_memory') || '{}');
-    if (!memory.lastOddMonthExtraWorkers) memory.lastOddMonthExtraWorkers = [];
-    if (!memory.shiftBalances) memory.shiftBalances = {};
-    if (!memory.lastMonthEndStates) memory.lastMonthEndStates = {};
-    return memory;
-}
-
-function saveCrossMonthMemory(memoryData) {
-    localStorage.setItem('cross_month_memory', JSON.stringify(memoryData));
-}
-
-var schedulingQuotas = {};
-
+// ===== 3.0 月度配额计算 =====
 function calculateMonthlyQuotas(persons, demands, daysInMonth, month, personRestDays) {
-    $.ajax({
-        url: '/FinalScheduler/ajax/api/log',
-        type: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({
-            level: 'debug',
-            message: '开始执行generateRoster函数'
-        }),
-        async: true
+    // 计算月度配额的简单实现
+    var quotas = {};
+    
+    // 默认配额规则：每人每月15个工作日
+    var defaultWorkDays = 15;
+    
+    // 计算每个员工的配额
+    persons.forEach(function(person) {
+        var pid = person.pid;
+        var demand = demands.find(function(d) { return d.pid === pid; });
+        
+        // 优先使用需求中的工作天数，否则使用默认值
+        var workDays = demand ? parseInt(demand.workDays) : defaultWorkDays;
+        
+        // 考虑休息日调整
+        var restDays = personRestDays[pid] || [];
+        var availableDays = daysInMonth - restDays.length;
+        
+        // 计算实际可用天数
+        var actualWorkDays = Math.min(workDays, availableDays);
+        
+        quotas[pid] = {
+            requested: workDays,
+            available: availableDays,
+            assigned: actualWorkDays
+        };
     });
-
-    // ... (rest of the function remains unchanged)
-}
-
-function generateRoster() {
-    $.ajax({
-        url: '/FinalScheduler/ajax/api/log',
-        type: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({
-            level: 'info',
-            message: '班表生成完成',
-            details: '生成月份: ' + $('#schedule_month').val()
-        }),
-        async: true
-    });
+    
+    return quotas;
 }
